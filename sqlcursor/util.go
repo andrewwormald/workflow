@@ -27,7 +27,7 @@ func (s *SQLCursor) create(ctx context.Context, name string, value string) (int6
 	return resp.LastInsertId()
 }
 
-func (s *SQLCursor) update(ctx context.Context, id int64, name string, value ...any) error {
+func (s *SQLCursor) update(ctx context.Context, id int64, name string, value string) error {
 	_, err := s.writer.ExecContext(ctx, "update "+s.name+" set  name=?, value=?, updated_at=now() where id=?;",
 		name,
 		value,
