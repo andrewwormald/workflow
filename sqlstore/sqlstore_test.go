@@ -53,7 +53,7 @@ func TestSQLStore_Store_LookupLatest_Find(t *testing.T) {
 func TestSQLStore_Batch(t *testing.T) {
 	dbc := ConnectForTesting(t)
 
-	store := sqlstore.New("workflows", dbc, dbc)
+	store := sqlstore.New("workflow_entries", dbc, dbc)
 
 	ctx := context.Background()
 
