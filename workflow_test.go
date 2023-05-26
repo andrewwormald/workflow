@@ -210,7 +210,7 @@ func TestWorkflow(t *testing.T) {
 	ctx := context.Background()
 	fid := strconv.FormatInt(expectedUserID, 10)
 
-	w.LaunchProcesses(ctx)
+	w.Run(ctx)
 
 	mt := MyType{
 		UserID: expectedUserID,
