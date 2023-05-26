@@ -108,7 +108,7 @@ func (w *Workflow[T]) Callback(ctx context.Context, foreignID string, status Sta
 	return nil
 }
 
-func (w *Workflow[T]) LaunchProcesses(ctx context.Context) {
+func (w *Workflow[T]) Run(ctx context.Context) {
 	for currentStatus, processes := range w.opts.processes {
 		for _, p := range processes {
 			// Launch all processes in runners
