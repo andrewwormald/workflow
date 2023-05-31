@@ -153,9 +153,9 @@ type Process[T any] struct {
 	DestinationStatus Status
 }
 
-type Consumer[T any] func(*T) (bool, error)
+type Consumer[T any] func(ctx context.Context, t *T) (bool, error)
 
-type CallbackFunc[T any] func(t *T, r io.Reader) (bool, error)
+type CallbackFunc[T any] func(ctx context.Context, t *T, r io.Reader) (bool, error)
 
 func StatefulStep[T any](from Status, c Consumer[T], to Status) Option[T] {
 	return func(o *options[T]) {
