@@ -42,7 +42,7 @@ func stream[T any](ctx context.Context, c Cursor, s Store, workflowName string, 
 				return err
 			}
 
-			ok, err := p.Consumer(&t)
+			ok, err := p.Consumer(ctx, &t)
 			if err != nil {
 				return errors.Wrap(err, "failed to process", j.MKV{
 					"workflow_name":      r.WorkflowName,

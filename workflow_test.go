@@ -108,18 +108,18 @@ func TestWorkflow(t *testing.T) {
 		expectedOTPVerified       = true
 	)
 
-	createProfile := func(mt *MyType) (bool, error) {
+	createProfile := func(ctx context.Context, mt *MyType) (bool, error) {
 		mt.Profile = "Andrew Wormald"
 		fmt.Println("creating profile", *mt)
 		return true, nil
 	}
 
-	sendEmailConfirmation := func(mt *MyType) (bool, error) {
+	sendEmailConfirmation := func(ctx context.Context, mt *MyType) (bool, error) {
 		fmt.Println("sending email confirmation", *mt)
 		return true, nil
 	}
 
-	emailVerifiedCallback := func(mt *MyType, r io.Reader) (bool, error) {
+	emailVerifiedCallback := func(ctx context.Context, mt *MyType, r io.Reader) (bool, error) {
 		fmt.Println("email verification callback", *mt)
 
 		b, err := io.ReadAll(r)
@@ -140,7 +140,7 @@ func TestWorkflow(t *testing.T) {
 		return true, nil
 	}
 
-	cellphoneNumberCallback := func(mt *MyType, r io.Reader) (bool, error) {
+	cellphoneNumberCallback := func(ctx context.Context, mt *MyType, r io.Reader) (bool, error) {
 		fmt.Println("cell phone number callback", *mt)
 		b, err := io.ReadAll(r)
 		if err != nil {
@@ -160,13 +160,13 @@ func TestWorkflow(t *testing.T) {
 		return true, nil
 	}
 
-	sendOTP := func(mt *MyType) (bool, error) {
+	sendOTP := func(ctx context.Context, mt *MyType) (bool, error) {
 		fmt.Println("send otp", *mt)
 		mt.OTP = expectedOTP
 		return true, nil
 	}
 
-	otpCallback := func(mt *MyType, r io.Reader) (bool, error) {
+	otpCallback := func(ctx context.Context, mt *MyType, r io.Reader) (bool, error) {
 		fmt.Println("otp callback", *mt)
 		b, err := io.ReadAll(r)
 		if err != nil {
@@ -186,7 +186,7 @@ func TestWorkflow(t *testing.T) {
 		return true, nil
 	}
 
-	sendTermsAndConditions := func(mt *MyType) (bool, error) {
+	sendTermsAndConditions := func(ctx context.Context, mt *MyType) (bool, error) {
 		fmt.Println("send terms and conditions", *mt)
 		return true, nil
 	}

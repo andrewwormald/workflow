@@ -17,7 +17,7 @@ func processCallback[T any](ctx context.Context, w *Workflow[T], destinationStat
 		return err
 	}
 
-	ok, err := fn(&t, payload)
+	ok, err := fn(ctx, &t, payload)
 	if err != nil {
 		return err
 	}
