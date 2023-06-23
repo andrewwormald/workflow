@@ -13,3 +13,15 @@ create table workflow_entries (
     index by_workflow_name_status (workflow_name, status),
     index by_workflow_name_foreign_id_status (workflow_name, foreign_id, status)
 );
+
+create table workflow_timeouts (
+    id                     bigint not null auto_increment,
+    workflow_entry_id       bigint not null,
+    completed              bool not null default false,
+    expire_at              datetime(3) not null,
+    created_at             datetime(3) not null,
+
+    primary key(id),
+
+    index by_completed_expire_at (completed, expire_at)
+);

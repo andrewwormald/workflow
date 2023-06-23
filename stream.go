@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -9,10 +10,9 @@ import (
 	"github.com/luno/jettison/j"
 )
 
-var ErrStreamingClosed = errors.New("streaming closed")
-
-func stream[T any](ctx context.Context, c Cursor, s Store, workflowName string, status string, p Process[T]) error {
-	val, err := c.Get(ctx, cursorName(workflowName, status))
+func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string, p process[T], shard, totalShards int64) error {
+	cName := cursorName(w.Name, status, shard, totalShards)
+	val, err := w.cursor.Get(ctx, cName)
 	if errors.Is(err, ErrCursorNotFound) {
 		// Set to default value of a string 0
 		val = "0"
@@ -30,19 +30,40 @@ func stream[T any](ctx context.Context, c Cursor, s Store, workflowName string, 
 			return errors.Wrap(ErrStreamingClosed, "")
 		}
 
-		rs, err := s.Batch(ctx, workflowName, status, cursor, 1000)
+		rs, err := w.store.Batch(ctx, w.Name, status, cursor, 1000)
 		if err != nil {
 			return err
 		}
 
 		for _, r := range rs {
-			var t T
-			err := Unmarshal(r.Object, &t)
+			if totalShards > 1 {
+				if r.ID%totalShards != shard {
+					// Ensure this consumer is intended to process this event
+					continue
+				}
+			}
+
+			fmt.Printf("Consuming event %v from %v %v of %v \n", r.ID, cName, shard, totalShards)
+
+			key := MakeKey(r.WorkflowName, r.ForeignID, r.RunID)
+			latest, err := w.store.LookupLatest(ctx, key)
 			if err != nil {
 				return err
 			}
 
-			ok, err := p.Consumer(ctx, &t)
+			if latest.Status != status {
+				// Event is out of date, for idempotence skip the event record and only process the event record
+				// that matches the latest record inserted
+				continue
+			}
+
+			var t T
+			err = Unmarshal(r.Object, &t)
+			if err != nil {
+				return err
+			}
+
+			ok, err := p.Consumer(ctx, key, &t)
 			if err != nil {
 				return errors.Wrap(err, "failed to process", j.MKV{
 					"workflow_name":      r.WorkflowName,
@@ -58,7 +79,10 @@ func stream[T any](ctx context.Context, c Cursor, s Store, workflowName string, 
 					return err
 				}
 
-				err = s.Store(ctx, workflowName, r.ForeignID, p.DestinationStatus.String(), b)
+				isStart := w.startingPoints[p.DestinationStatus.String()]
+				isEnd := w.endPoints[p.DestinationStatus.String()]
+
+				err = w.store.Store(ctx, key, p.DestinationStatus.String(), b, isStart, isEnd)
 				if err != nil {
 					return err
 				}
@@ -67,12 +91,12 @@ func stream[T any](ctx context.Context, c Cursor, s Store, workflowName string, 
 			cursor = r.ID
 		}
 
-		err = c.Set(ctx, cursorName(workflowName, status), strconv.FormatInt(cursor, 10))
+		err = w.cursor.Set(ctx, cName, strconv.FormatInt(cursor, 10))
 		if err != nil {
 			return err
 		}
 
-		err = wait(ctx, time.Second)
+		err = wait(ctx, w.pollingFrequency)
 		if err != nil {
 			return err
 		}
@@ -93,15 +117,15 @@ func wait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func awaitWorkflowStatusByForeignID[T any](ctx context.Context, s Store, workflowName string, foreignID string, status string) (*T, error) {
+func awaitWorkflowStatusByForeignID[T any](ctx context.Context, w *Workflow[T], key Key, status string) (*T, error) {
 	for {
 		if ctx.Err() != nil {
 			return nil, errors.Wrap(ErrStreamingClosed, "")
 		}
 
-		r, err := s.Find(ctx, workflowName, foreignID, status)
+		r, err := w.store.Find(ctx, key, status)
 		if errors.Is(err, ErrRecordNotFound) {
-			err = wait(ctx, time.Second)
+			err = wait(ctx, w.pollingFrequency)
 			if err != nil {
 				return nil, err
 			}
@@ -119,5 +143,82 @@ func awaitWorkflowStatusByForeignID[T any](ctx context.Context, s Store, workflo
 		}
 
 		return &t, nil
+	}
+}
+
+// pollTimeouts attempts to find the very next
+func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, timeoutsForStatus []timeout[T]) error {
+	for {
+		if ctx.Err() != nil {
+			return errors.Wrap(ErrStreamingClosed, "")
+		}
+
+		expiredTimeouts, err := w.store.ListValidTimeouts(ctx, w.Name, status, w.clock.Now())
+		if err != nil {
+			return err
+		}
+
+		if len(expiredTimeouts) == 0 {
+			// Sleep and tray again if there are no timeouts available
+			err = wait(ctx, w.pollingFrequency)
+			if err != nil {
+				return err
+			}
+
+			// Try again
+			continue
+		}
+
+		for _, expiredTimeout := range expiredTimeouts {
+			key := MakeKey(expiredTimeout.WorkflowName, expiredTimeout.ForeignID, expiredTimeout.RunID)
+			r, err := w.store.LookupLatest(ctx, key)
+			if err != nil {
+				return err
+			}
+
+			if r.Status != status {
+				// Object has been updated already. Mark timeout as cancelled as it is no longer valid.
+				err = w.store.CancelTimeout(ctx, expiredTimeout.ID)
+				if err != nil {
+					return err
+				}
+			}
+
+			var t T
+			err = Unmarshal(r.Object, &t)
+			if err != nil {
+				return err
+			}
+
+			for _, config := range timeoutsForStatus {
+				ok, err := config.TimeoutFunc(ctx, key, &t, time.Now())
+				if err != nil {
+					return err
+				}
+
+				if ok {
+					b, err := Marshal(&t)
+					if err != nil {
+						return err
+					}
+
+					isStart := w.startingPoints[config.DestinationStatus.String()]
+					isEnd := w.endPoints[config.DestinationStatus.String()]
+
+					err = w.store.Store(ctx, key, config.DestinationStatus.String(), b, isStart, isEnd)
+					if err != nil {
+						return err
+					}
+
+					// Mark timeout as having been executed (aka completed) only in the case that true is returned.
+					err = w.store.CompleteTimeout(ctx, expiredTimeout.ID)
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
+
+		return nil
 	}
 }

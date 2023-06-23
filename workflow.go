@@ -2,66 +2,53 @@ package workflow
 
 import (
 	"context"
-	"github.com/luno/jettison/j"
-	"github.com/luno/jettison/log"
 	"io"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/luno/jettison/errors"
+	"github.com/luno/jettison/j"
+	"github.com/luno/jettison/log"
+	"k8s.io/utils/clock"
 )
 
-func New[T any](name string, b Backends, opts ...Option[T]) *Workflow[T] {
-	o := options[T]{
-		processes: make(map[string][]Process[T]),
-		callback: make(map[string][]struct {
-			DestinationStatus Status
-			CallbackFunc[T]
-		}),
+func BuildNew[T any](name string, store Store, cursor Cursor) *Builder[T] {
+	return &Builder[T]{
+		workflow: &Workflow[T]{
+			Name: name,
+			// Add options to provide clock for testing
+			clock:     clock.RealClock{},
+			store:     store,
+			cursor:    cursor,
+			processes: make(map[string][]process[T]),
+			callback:  make(map[string][]callback[T]),
+			timeouts:  make(map[string][]timeout[T]),
+		},
 	}
-
-	for _, opt := range opts {
-		opt(&o)
-	}
-
-	return &Workflow[T]{
-		Name:   name,
-		store:  b.WorkflowStore(),
-		cursor: b.WorkflowCursor(),
-		opts:   o,
-	}
-}
-
-var ErrRecordNotFound = errors.New("record not found")
-
-type Store interface {
-	LookupLatest(ctx context.Context, workflowName string, foreignID string) (*Record, error)
-	Store(ctx context.Context, workflowName string, foreignID string, status string, object []byte) error
-	Batch(ctx context.Context, workflowName string, status string, fromID int64, size int) ([]*Record, error)
-	Find(ctx context.Context, workflowName string, foreignID string, status string) (*Record, error)
-}
-
-type Record struct {
-	ID           int64
-	WorkflowName string
-	ForeignID    string
-	Status       string
-	Object       []byte
-	CreatedAt    time.Time
-}
-
-type Backends interface {
-	WorkflowStore() Store
-	WorkflowCursor() Cursor
 }
 
 type Workflow[T any] struct {
-	Name   string
+	Name string
+
+	clock            clock.Clock
+	pollingFrequency time.Duration
+
+	once sync.Once
+
 	store  Store
 	cursor Cursor
-	opts   options[T]
+
+	processes map[string][]process[T]
+	callback  map[string][]callback[T]
+	timeouts  map[string][]timeout[T]
+
+	graph          map[string][]string
+	startingPoints map[string]bool
+	endPoints      map[string]bool
 }
 
-func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingStatus Status, opts ...TriggerOption[T]) error {
+func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingStatus Status, opts ...TriggerOption[T]) (runID string, err error) {
 	var o triggerOpts[T]
 	for _, fn := range opts {
 		fn(&o)
@@ -74,10 +61,41 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 
 	object, err := Marshal(&t)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	return w.store.Store(ctx, w.Name, foreignID, startingStatus.String(), object)
+	hasExisitngWorkflow := true
+	lastRunID, err := w.store.LastRunID(ctx, w.Name, foreignID)
+	if errors.Is(err, ErrRunIDNotFound) {
+		hasExisitngWorkflow = false
+	} else if err != nil {
+		return "", err
+	}
+
+	// Ensure the the previous existing workflow has been completed.
+	if hasExisitngWorkflow {
+		lastKey := MakeKey(w.Name, foreignID, lastRunID)
+		lastRecord, err := w.store.LookupLatest(ctx, lastKey)
+		if err != nil {
+			return "", err
+		}
+
+		// Check that the last entry for that workflow was a terminal step when entered.
+		if !lastRecord.IsEnd {
+			// Cannot trigger a new workflow for this foreignID if there is a workflow in progress
+			return "", errors.Wrap(ErrWorkflowInProgress, "")
+		}
+	}
+
+	uid, err := uuid.NewUUID()
+	if err != nil {
+		return "", err
+	}
+
+	key := MakeKey(w.Name, foreignID, uid.String())
+	isStart := w.startingPoints[startingStatus.String()]
+	isEnd := w.endPoints[startingStatus.String()]
+	return key.RunID, w.store.Store(ctx, key, startingStatus.String(), object, isStart, isEnd)
 }
 
 type triggerOpts[T any] struct {
@@ -93,12 +111,13 @@ func WithInitialValue[T any](t *T) TriggerOption[T] {
 	}
 }
 
-func (w *Workflow[T]) Await(ctx context.Context, foreignID string, status Status) (*T, error) {
-	return awaitWorkflowStatusByForeignID[T](ctx, w.store, w.Name, foreignID, status.String())
+func (w *Workflow[T]) Await(ctx context.Context, foreignID string, runID string, status Status) (*T, error) {
+	key := MakeKey(w.Name, foreignID, runID)
+	return awaitWorkflowStatusByForeignID[T](ctx, w, key, status.String())
 }
 
 func (w *Workflow[T]) Callback(ctx context.Context, foreignID string, status Status, payload io.Reader) error {
-	for _, s := range w.opts.callback[status.String()] {
+	for _, s := range w.callback[status.String()] {
 		err := processCallback(ctx, w, s.DestinationStatus.String(), s.CallbackFunc, foreignID, payload)
 		if err != nil {
 			return err
@@ -108,72 +127,129 @@ func (w *Workflow[T]) Callback(ctx context.Context, foreignID string, status Sta
 	return nil
 }
 
-func (w *Workflow[T]) Run(ctx context.Context) {
-	for currentStatus, processes := range w.opts.processes {
-		for _, p := range processes {
-			// Launch all processes in runners
-			go runner(ctx, w, currentStatus, p)
+func (w *Workflow[T]) RunBackground(ctx context.Context) {
+	// Ensure that the background consumers are only initialized once
+	w.once.Do(func() {
+		for currentStatus, processes := range w.processes {
+			for _, p := range processes {
+				if p.ParallelCount < 2 {
+					// Launch all processes in runners
+					go runner(ctx, w, currentStatus, p, 1, 1)
+				} else {
+					// Run as sharded parallel consumers
+					for i := int64(0); i < p.ParallelCount; i++ {
+						go runner(ctx, w, currentStatus, p, i, p.ParallelCount)
+					}
+				}
+			}
 		}
-	}
+
+		for status, timeoutsForStatus := range w.timeouts {
+			go timeoutRunner(ctx, w, status, timeoutsForStatus)
+			go timeoutAutoInserter(ctx, w, status, timeoutsForStatus)
+		}
+	})
 }
 
-func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p Process[T]) {
+type Transformer[Event any] func(r *Record) (*Event, error)
+
+func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p process[T], shard, totalShards int64) {
 	for {
-		err := stream(ctx, w.cursor, w.store, w.Name, currentStatus, p)
+		err := streamAndConsume(ctx, w, currentStatus, p, shard, totalShards)
 		if errors.Is(err, ErrStreamingClosed) {
-			log.Info(ctx, "shutting down process", j.MKV{
+			log.Info(ctx, "shutting down process - runner", j.MKV{
 				"workflow_name":      w.Name,
 				"current_status":     currentStatus,
 				"destination_status": p.DestinationStatus,
 			})
+		} else if err != nil {
+			log.Error(ctx, errors.Wrap(err, "runner error"))
 		}
 
-		log.Error(ctx, errors.Wrap(err, "runner error"))
 		select {
 		case <-ctx.Done():
-		case <-time.After(time.Minute): // Incorporate a 1 minute backoff
+		case <-time.After(time.Minute): // Incorporate a 1 - minute backoff
 		}
 	}
 }
 
-type Option[T any] func(o *options[T])
+func timeoutRunner[T any](ctx context.Context, w *Workflow[T], currentStatus string, timeoutsForStatus []timeout[T]) {
+	for {
+		err := pollTimeouts(ctx, w, currentStatus, timeoutsForStatus)
+		if err != nil {
+			log.Error(ctx, errors.Wrap(err, "runner error"))
+		}
 
-type options[T any] struct {
-	processes map[string][]Process[T]
-	callback  map[string][]struct {
-		DestinationStatus Status
-		CallbackFunc[T]
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Minute): // Incorporate a 1 - minute backoff
+		}
 	}
-
-	startingPoint string
 }
 
-type Process[T any] struct {
-	Consumer          Consumer[T]
+func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status string, timeoutConfigs []timeout[T]) {
+	for {
+		err := streamAndConsume(ctx, w, status, process[T]{
+			Consumer: func(ctx context.Context, key Key, t *T) (bool, error) {
+				for _, config := range timeoutConfigs {
+					expireAt := w.clock.Now().Add(config.Duration)
+
+					err := w.store.CreateTimeout(ctx, key, status, expireAt)
+					if err != nil {
+						return false, err
+					}
+				}
+
+				// Never update state even when successful
+				return false, nil
+			},
+		}, 1, 1)
+		if errors.Is(err, ErrStreamingClosed) {
+			log.Info(ctx, "shutting down process - timeout auto inserter", j.MKV{
+				"workflow_name": w.Name,
+				"status":        status,
+			})
+		} else if err != nil {
+			log.Error(ctx, errors.Wrap(err, "runner error"))
+		}
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Minute): // Incorporate a 1 - minute backoff
+		}
+	}
+}
+
+type process[T any] struct {
+	Consumer          ConsumerFunc[T]
 	DestinationStatus Status
+	ParallelCount     int64
 }
 
-type Consumer[T any] func(ctx context.Context, t *T) (bool, error)
-
-type CallbackFunc[T any] func(ctx context.Context, t *T, r io.Reader) (bool, error)
-
-func StatefulStep[T any](from Status, c Consumer[T], to Status) Option[T] {
-	return func(o *options[T]) {
-		o.processes[from.String()] = append(o.processes[from.String()], Process[T]{
-			Consumer:          c,
-			DestinationStatus: to,
-		})
-	}
+type callback[T any] struct {
+	DestinationStatus Status
+	CallbackFunc      CallbackFunc[T]
 }
 
-func Callback[T any](from Status, fn CallbackFunc[T], to Status) Option[T] {
-	return func(o *options[T]) {
-		o.callback[from.String()] = append(o.callback[from.String()], struct {
-			DestinationStatus Status
-			CallbackFunc[T]
-		}{
-			DestinationStatus: to,
-			CallbackFunc:      fn,
-		})
+type timeout[T any] struct {
+	DestinationStatus Status
+	Duration          time.Duration
+	TimeoutFunc       TimeoutFunc[T]
+}
+
+type ConsumerFunc[T any] func(ctx context.Context, key Key, t *T) (bool, error)
+
+type CallbackFunc[T any] func(ctx context.Context, key Key, t *T, r io.Reader) (bool, error)
+
+type TimeoutFunc[T any] func(ctx context.Context, key Key, t *T, now time.Time) (bool, error)
+
+func Not[T any](c ConsumerFunc[T]) ConsumerFunc[T] {
+	return func(ctx context.Context, key Key, t *T) (bool, error) {
+		pass, err := c(ctx, key, t)
+		if err != nil {
+			return false, err
+		}
+
+		return !pass, nil
 	}
 }

@@ -6,7 +6,13 @@ import (
 )
 
 func processCallback[T any](ctx context.Context, w *Workflow[T], destinationStatus string, fn CallbackFunc[T], foreignID string, payload io.Reader) error {
-	latest, err := w.store.LookupLatest(ctx, w.Name, foreignID)
+	runID, err := w.store.LastRunID(ctx, w.Name, foreignID)
+	if err != nil {
+		return err
+	}
+
+	key := MakeKey(w.Name, foreignID, runID)
+	latest, err := w.store.LookupLatest(ctx, key)
 	if err != nil {
 		return err
 	}
@@ -17,7 +23,7 @@ func processCallback[T any](ctx context.Context, w *Workflow[T], destinationStat
 		return err
 	}
 
-	ok, err := fn(ctx, &t, payload)
+	ok, err := fn(ctx, key, &t, payload)
 	if err != nil {
 		return err
 	}
@@ -31,5 +37,7 @@ func processCallback[T any](ctx context.Context, w *Workflow[T], destinationStat
 		return err
 	}
 
-	return w.store.Store(ctx, w.Name, foreignID, destinationStatus, object)
+	isStart := w.startingPoints[destinationStatus]
+	isEnd := w.endPoints[destinationStatus]
+	return w.store.Store(ctx, key, destinationStatus, object, isStart, isEnd)
 }

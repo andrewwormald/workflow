@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/andrewwormald/workflow/workflowtest"
+	"github.com/andrewwormald/workflow"
+	"github.com/andrewwormald/workflow/memcursor"
+	"github.com/andrewwormald/workflow/memstore"
 	"github.com/luno/jettison/jtest"
 	"github.com/stretchr/testify/require"
 	"io"
 	"strconv"
 	"testing"
-
-	"github.com/andrewwormald/workflow"
-	"github.com/andrewwormald/workflow/memcursor"
-	"github.com/andrewwormald/workflow/memstore"
+	"time"
 )
 
 type MyType struct {
@@ -29,12 +28,7 @@ func (m MyType) ForeignID() string {
 	return strconv.FormatInt(m.UserID, 10)
 }
 
-// CheckStatus is the state of an Onfido check.
 type Status int
-
-func (s Status) DynaFlowStep() int {
-	return int(s)
-}
 
 func (s Status) String() string {
 	switch s {
@@ -68,7 +62,7 @@ const (
 	StatusCellphoneNumberSubmitted Status = 5
 	StatusOTPSent                  Status = 6
 	StatusOTPVerified              Status = 7
-	StatusCompleted                Status = 8
+	StatusCompleted                Status = 9
 )
 
 type ExternalEmailVerified struct {
@@ -84,158 +78,55 @@ type ExternalOTP struct {
 	OTPCode int
 }
 
-type Backends struct {
-	cursor workflow.Cursor
-	store  workflow.Store
-}
-
-func (b *Backends) WorkflowStore() workflow.Store {
-	return b.store
-}
-
-func (b *Backends) WorkflowCursor() workflow.Cursor {
-	return b.cursor
-}
-
 func TestWorkflow(t *testing.T) {
-	var (
-		expectedUserID      int64 = 984892374983743
-		expectedFinalStatus       = StatusCompleted
-		expectedProfile           = "Andrew Wormald"
-		expectedEmail             = "andreww@luno.com"
-		expectedCellphone         = "+44 7467623292"
-		expectedOTP               = 345345
-		expectedOTPVerified       = true
-	)
-
-	createProfile := func(ctx context.Context, mt *MyType) (bool, error) {
-		mt.Profile = "Andrew Wormald"
-		fmt.Println("creating profile", *mt)
-		return true, nil
-	}
-
-	sendEmailConfirmation := func(ctx context.Context, mt *MyType) (bool, error) {
-		fmt.Println("sending email confirmation", *mt)
-		return true, nil
-	}
-
-	emailVerifiedCallback := func(ctx context.Context, mt *MyType, r io.Reader) (bool, error) {
-		fmt.Println("email verification callback", *mt)
-
-		b, err := io.ReadAll(r)
-		if err != nil {
-			return false, err
-		}
-
-		var ev ExternalEmailVerified
-		err = json.Unmarshal(b, &ev)
-		if err != nil {
-			return false, err
-		}
-
-		if ev.IsVerified {
-			mt.Email = "andreww@luno.com"
-		}
-
-		return true, nil
-	}
-
-	cellphoneNumberCallback := func(ctx context.Context, mt *MyType, r io.Reader) (bool, error) {
-		fmt.Println("cell phone number callback", *mt)
-		b, err := io.ReadAll(r)
-		if err != nil {
-			return false, err
-		}
-
-		var ev ExternalCellPhoneSubmitted
-		err = json.Unmarshal(b, &ev)
-		if err != nil {
-			return false, err
-		}
-
-		if ev.DialingCode != "" && ev.Number != "" {
-			mt.Cellphone = fmt.Sprintf("%v %v", ev.DialingCode, ev.Number)
-		}
-
-		return true, nil
-	}
-
-	sendOTP := func(ctx context.Context, mt *MyType) (bool, error) {
-		fmt.Println("send otp", *mt)
-		mt.OTP = expectedOTP
-		return true, nil
-	}
-
-	otpCallback := func(ctx context.Context, mt *MyType, r io.Reader) (bool, error) {
-		fmt.Println("otp callback", *mt)
-		b, err := io.ReadAll(r)
-		if err != nil {
-			return false, err
-		}
-
-		var otp ExternalOTP
-		err = json.Unmarshal(b, &otp)
-		if err != nil {
-			return false, err
-		}
-
-		if otp.OTPCode == expectedOTP {
-			mt.OTPVerified = true
-		}
-
-		return true, nil
-	}
-
-	sendTermsAndConditions := func(ctx context.Context, mt *MyType) (bool, error) {
-		fmt.Println("send terms and conditions", *mt)
-		return true, nil
-	}
-
-	backends := &Backends{
-		cursor: memcursor.New(),
-		store:  memstore.New(),
-	}
 	// This introduces a validation element to the producing of events.
-	w := workflow.New("sign up",
-		backends,
-		workflow.StatefulStep(StatusInitiated, createProfile, StatusProfileCreated),
-		workflow.StatefulStep(StatusProfileCreated, sendEmailConfirmation, StatusEmailConfirmationSent),
-		workflow.Callback(StatusEmailConfirmationSent, emailVerifiedCallback, StatusEmailVerified),
-		workflow.Callback(StatusEmailVerified, cellphoneNumberCallback, StatusCellphoneNumberSubmitted),
-		workflow.StatefulStep(StatusCellphoneNumberSubmitted, sendOTP, StatusOTPSent),
-		workflow.Callback(StatusOTPSent, otpCallback, StatusOTPVerified),
-		workflow.StatefulStep(StatusOTPVerified, sendTermsAndConditions, StatusCompleted),
-	)
+	store := memstore.New()
+	cursor := memcursor.New()
+
+	b := workflow.BuildNew[MyType]("user sign up", store, cursor)
+	b.AddStep(StatusInitiated, createProfile, StatusProfileCreated)
+	b.AddStep(StatusProfileCreated, sendEmailConfirmation, StatusEmailConfirmationSent, workflow.WithParallelCount(5))
+	b.AddCallback(StatusEmailConfirmationSent, emailVerifiedCallback, StatusEmailVerified)
+	b.AddCallback(StatusEmailVerified, cellphoneNumberCallback, StatusCellphoneNumberSubmitted)
+	b.AddStep(StatusCellphoneNumberSubmitted, sendOTP, StatusOTPSent, workflow.WithParallelCount(5))
+	b.AddCallback(StatusOTPSent, otpCallback, StatusOTPVerified)
+	b.AddTimeout(StatusOTPVerified, waitForAccountCoolDown, time.Hour, StatusCompleted)
+	wf := b.Complete()
 
 	ctx := context.Background()
 	fid := strconv.FormatInt(expectedUserID, 10)
 
-	w.Run(ctx)
+	wf.RunBackground(ctx)
 
 	mt := MyType{
 		UserID: expectedUserID,
 	}
-	err := w.Trigger(ctx, fid, StatusInitiated, workflow.WithInitialValue(&mt))
+
+	runID, err := wf.Trigger(ctx, fid, StatusInitiated, workflow.WithInitialValue(&mt))
 	jtest.RequireNil(t, err)
 
 	// Once in the correct state, trigger third party callbacks
-	workflowtest.TriggerCallbackOn(t, w, fid, StatusEmailConfirmationSent, ExternalEmailVerified{
+	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusEmailConfirmationSent, ExternalEmailVerified{
 		IsVerified: true,
 	})
-	workflowtest.TriggerCallbackOn(t, w, fid, StatusEmailVerified, ExternalCellPhoneSubmitted{
+
+	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusEmailVerified, ExternalCellPhoneSubmitted{
 		DialingCode: "+44",
 		Number:      "7467623292",
 	})
-	workflowtest.TriggerCallbackOn(t, w, fid, StatusOTPSent, ExternalOTP{
+
+	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusOTPSent, ExternalOTP{
 		OTPCode: expectedOTP,
 	})
 
-	_, err = w.Await(ctx, fid, StatusCompleted)
+	workflow.ChangeTimeOn(t, wf, fid, runID, StatusOTPVerified, time.Now().Add(time.Hour))
+
+	_, err = wf.Await(ctx, fid, runID, StatusCompleted)
 	jtest.RequireNil(t, err)
 
-	r, err := backends.store.LookupLatest(ctx, "sign up", fid)
+	key := workflow.MakeKey("user sign up", fid, runID)
+	r, err := store.LookupLatest(ctx, key)
 	jtest.RequireNil(t, err)
-
 	require.Equal(t, expectedFinalStatus.String(), r.Status)
 
 	var actual MyType
@@ -249,4 +140,97 @@ func TestWorkflow(t *testing.T) {
 	require.Equal(t, expectedCellphone, actual.Cellphone)
 	require.Equal(t, expectedOTP, actual.OTP)
 	require.Equal(t, expectedOTPVerified, actual.OTPVerified)
+}
+
+var (
+	expectedUserID      int64 = 984892374983743
+	expectedFinalStatus       = StatusCompleted
+	expectedProfile           = "Andrew Wormald"
+	expectedEmail             = "andreww@luno.com"
+	expectedCellphone         = "+44 7467623292"
+	expectedOTP               = 345345
+	expectedOTPVerified       = true
+)
+
+func createProfile(ctx context.Context, key workflow.Key, mt *MyType) (bool, error) {
+	mt.Profile = "Andrew Wormald"
+	fmt.Println("creating profile", *mt)
+	return true, nil
+}
+
+func sendEmailConfirmation(ctx context.Context, key workflow.Key, mt *MyType) (bool, error) {
+	fmt.Println("sending email confirmation", *mt)
+	return true, nil
+}
+
+func emailVerifiedCallback(ctx context.Context, key workflow.Key, mt *MyType, r io.Reader) (bool, error) {
+	fmt.Println("email verification callback", *mt)
+
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return false, err
+	}
+
+	var ev ExternalEmailVerified
+	err = json.Unmarshal(b, &ev)
+	if err != nil {
+		return false, err
+	}
+
+	if ev.IsVerified {
+		mt.Email = "andreww@luno.com"
+	}
+
+	return true, nil
+}
+
+func cellphoneNumberCallback(ctx context.Context, key workflow.Key, mt *MyType, r io.Reader) (bool, error) {
+	fmt.Println("cell phone number callback", *mt)
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return false, err
+	}
+
+	var ev ExternalCellPhoneSubmitted
+	err = json.Unmarshal(b, &ev)
+	if err != nil {
+		return false, err
+	}
+
+	if ev.DialingCode != "" && ev.Number != "" {
+		mt.Cellphone = fmt.Sprintf("%v %v", ev.DialingCode, ev.Number)
+	}
+
+	return true, nil
+}
+
+func sendOTP(ctx context.Context, key workflow.Key, mt *MyType) (bool, error) {
+	fmt.Println("send otp", *mt)
+	mt.OTP = expectedOTP
+	return true, nil
+}
+
+func otpCallback(ctx context.Context, key workflow.Key, mt *MyType, r io.Reader) (bool, error) {
+	fmt.Println("otp callback", *mt)
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return false, err
+	}
+
+	var otp ExternalOTP
+	err = json.Unmarshal(b, &otp)
+	if err != nil {
+		return false, err
+	}
+
+	if otp.OTPCode == expectedOTP {
+		mt.OTPVerified = true
+	}
+
+	return true, nil
+}
+
+func waitForAccountCoolDown(ctx context.Context, key workflow.Key, mt *MyType, now time.Time) (bool, error) {
+	fmt.Println(fmt.Sprintf("completed waiting for account cool down %v at %v", *mt, now.String()))
+	return true, nil
 }
