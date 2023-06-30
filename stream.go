@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 
 func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string, p process[T], shard, totalShards int64) error {
 	cName := cursorName(w.Name, status, shard, totalShards)
+
 	val, err := w.cursor.Get(ctx, cName)
 	if errors.Is(err, ErrCursorNotFound) {
 		// Set to default value of a string 0
@@ -42,8 +42,6 @@ func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string,
 					continue
 				}
 			}
-
-			fmt.Printf("Consuming event %v from %v %v of %v \n", r.ID, cName, shard, totalShards)
 
 			key := MakeKey(r.WorkflowName, r.ForeignID, r.RunID)
 			latest, err := w.store.LookupLatest(ctx, key)
@@ -79,10 +77,10 @@ func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string,
 					return err
 				}
 
-				isStart := w.startingPoints[p.DestinationStatus.String()]
 				isEnd := w.endPoints[p.DestinationStatus.String()]
 
-				err = w.store.Store(ctx, key, p.DestinationStatus.String(), b, isStart, isEnd)
+				// isStart is only true at time of trigger and thus default set to false
+				err = w.store.Store(ctx, key, p.DestinationStatus.String(), b, false, isEnd)
 				if err != nil {
 					return err
 				}
@@ -96,7 +94,7 @@ func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string,
 			return err
 		}
 
-		err = wait(ctx, w.pollingFrequency)
+		err = wait(ctx, p.PollingFrequency)
 		if err != nil {
 			return err
 		}
@@ -117,7 +115,7 @@ func wait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func awaitWorkflowStatusByForeignID[T any](ctx context.Context, w *Workflow[T], key Key, status string) (*T, error) {
+func awaitWorkflowStatusByForeignID[T any](ctx context.Context, w *Workflow[T], key Key, status string, pollFrequency time.Duration) (*T, error) {
 	for {
 		if ctx.Err() != nil {
 			return nil, errors.Wrap(ErrStreamingClosed, "")
@@ -125,7 +123,7 @@ func awaitWorkflowStatusByForeignID[T any](ctx context.Context, w *Workflow[T], 
 
 		r, err := w.store.Find(ctx, key, status)
 		if errors.Is(err, ErrRecordNotFound) {
-			err = wait(ctx, w.pollingFrequency)
+			err = wait(ctx, pollFrequency)
 			if err != nil {
 				return nil, err
 			}
@@ -147,7 +145,7 @@ func awaitWorkflowStatusByForeignID[T any](ctx context.Context, w *Workflow[T], 
 }
 
 // pollTimeouts attempts to find the very next
-func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, timeoutsForStatus []timeout[T]) error {
+func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) error {
 	for {
 		if ctx.Err() != nil {
 			return errors.Wrap(ErrStreamingClosed, "")
@@ -156,17 +154,6 @@ func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, tim
 		expiredTimeouts, err := w.store.ListValidTimeouts(ctx, w.Name, status, w.clock.Now())
 		if err != nil {
 			return err
-		}
-
-		if len(expiredTimeouts) == 0 {
-			// Sleep and tray again if there are no timeouts available
-			err = wait(ctx, w.pollingFrequency)
-			if err != nil {
-				return err
-			}
-
-			// Try again
-			continue
 		}
 
 		for _, expiredTimeout := range expiredTimeouts {
@@ -190,7 +177,7 @@ func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, tim
 				return err
 			}
 
-			for _, config := range timeoutsForStatus {
+			for _, config := range timeouts.Transitions {
 				ok, err := config.TimeoutFunc(ctx, key, &t, time.Now())
 				if err != nil {
 					return err
@@ -202,10 +189,10 @@ func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, tim
 						return err
 					}
 
-					isStart := w.startingPoints[config.DestinationStatus.String()]
 					isEnd := w.endPoints[config.DestinationStatus.String()]
 
-					err = w.store.Store(ctx, key, config.DestinationStatus.String(), b, isStart, isEnd)
+					// isStart is only true at time of trigger and thus default set to false
+					err = w.store.Store(ctx, key, config.DestinationStatus.String(), b, false, isEnd)
 					if err != nil {
 						return err
 					}
@@ -219,6 +206,10 @@ func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, tim
 			}
 		}
 
-		return nil
+		// Use the fastest polling frequency to sleep and try again if there are no timeouts available
+		err = wait(ctx, timeouts.PollingFrequency)
+		if err != nil {
+			return err
+		}
 	}
 }

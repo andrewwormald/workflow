@@ -1,0 +1,13 @@
+Requirements
+
+- Super Duper testable
+- Remove need for setting up db tables for new workflows
+- No code generation
+- Native support for timeout operations (e.g. account cool down periods etc)
+- Native support for callbacks (e.g. call a async endpoint and trigger the callback from a webhook handler)
+- Store the origin stack trace of the trigger even from other gRPC calls
+    - If the origin starts on an api service, then hits a payments service, then hits a transact service, then triggers
+     the workflow we need to store the call stack.
+- Natively chain workflows together
+    - Mention which workflow must be triggered
+    - Then natively get an update in your workflow that it has completed

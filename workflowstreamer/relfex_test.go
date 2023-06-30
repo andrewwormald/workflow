@@ -16,27 +16,40 @@ import (
 
 func TestStreamConversion(t *testing.T) {
 	key := workflow.MakeKey("workflow_name", "foreign_id", "run_id")
+
+	var (
+		expectedUserID    int64  = 1
+		expectedUserName  string = "Andrew Wormald"
+		expectedUserEmail string = "andrew@something.com"
+	)
+
+	tu := testUser{
+		UserID: expectedUserID,
+		Email:  expectedUserEmail,
+		Name:   expectedUserName,
+	}
+
+	b, err := workflow.Marshal(&tu)
+	jtest.RequireNil(t, err)
+
 	testCases := []struct {
-		name              string
-		seed              []func(ctx context.Context, s workflow.Store)
-		expected          []workflow.Record
-		expectedUserID    int64
-		expectedUserName  string
-		expectedUserEmail string
+		name     string
+		seed     []func(ctx context.Context, s workflow.Store)
+		expected []workflow.Record
 	}{
 		{
 			name: "Started, normal, and completed entry types",
 			seed: []func(ctx context.Context, s workflow.Store){
 				func(ctx context.Context, s workflow.Store) {
-					err := s.Store(ctx, key, "Started", []byte{}, true, false)
+					err := s.Store(ctx, key, "Started", b, true, false)
 					jtest.RequireNil(t, err)
 				},
 				func(ctx context.Context, s workflow.Store) {
-					err := s.Store(ctx, key, "Middle", []byte{}, false, false)
+					err := s.Store(ctx, key, "Middle", b, false, false)
 					jtest.RequireNil(t, err)
 				},
 				func(ctx context.Context, s workflow.Store) {
-					err := s.Store(ctx, key, "Completed", []byte{}, false, true)
+					err := s.Store(ctx, key, "Completed", b, false, true)
 					jtest.RequireNil(t, err)
 				},
 			},
@@ -49,7 +62,7 @@ func TestStreamConversion(t *testing.T) {
 					Status:       "Started",
 					IsStart:      true,
 					IsEnd:        false,
-					Object:       []byte{},
+					Object:       b,
 					CreatedAt:    time.Now(),
 				},
 				{
@@ -60,7 +73,7 @@ func TestStreamConversion(t *testing.T) {
 					Status:       "Middle",
 					IsStart:      false,
 					IsEnd:        false,
-					Object:       []byte{},
+					Object:       b,
 					CreatedAt:    time.Now(),
 				},
 				{
@@ -71,7 +84,7 @@ func TestStreamConversion(t *testing.T) {
 					Status:       "Completed",
 					IsStart:      false,
 					IsEnd:        true,
-					Object:       []byte{},
+					Object:       b,
 					CreatedAt:    time.Now(),
 				},
 			},
@@ -82,7 +95,7 @@ func TestStreamConversion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
 			ctx := context.Background()
-			streamerFunc := workflowstreamer.NewReflexStreamer(nil, "new user")
+			streamerFunc := workflowstreamer.NewReflexStreamer(store, "workflow_name")
 
 			for _, fn := range tc.seed {
 				fn(ctx, store)
@@ -109,7 +122,7 @@ func TestStreamConversion(t *testing.T) {
 				require.Equal(t, exp.ForeignID, event.ForeignID)
 				require.WithinDuration(t, exp.CreatedAt, event.Timestamp, time.Second)
 
-				entry, err := workflow.Translate[testUser](event)
+				entry, err := workflowstreamer.Translate[testUser](event)
 				jtest.RequireNil(t, err)
 
 				require.Equal(t, exp.ID, entry.ID)
@@ -118,9 +131,9 @@ func TestStreamConversion(t *testing.T) {
 				require.Equal(t, exp.ForeignID, entry.ForeignID)
 				require.Equal(t, exp.IsStart, entry.IsStart)
 				require.Equal(t, exp.IsEnd, entry.IsEnd)
-				require.Equal(t, tc.expectedUserID, entry.Object.UserID)
-				require.Equal(t, tc.expectedUserName, entry.Object.Name)
-				require.Equal(t, tc.expectedUserEmail, entry.Object.Email)
+				require.Equal(t, expectedUserID, entry.Object.UserID)
+				require.Equal(t, expectedUserName, entry.Object.Name)
+				require.Equal(t, expectedUserEmail, entry.Object.Email)
 				require.WithinDuration(t, exp.CreatedAt, entry.CreatedAt, time.Second)
 			}
 		})
@@ -170,7 +183,7 @@ func testReflexConsumerCompatibility(t *testing.T, store workflow.Store) {
 	jtest.RequireNil(t, err)
 
 	cursor := rpatterns.MemCursorStore()
-	var records []workflow.TypedRecord[testUser]
+	var records []workflowstreamer.TypedRecord[testUser]
 	run(t, ctx, store, "example", cursor, exampleConsumer(&records))
 
 	require.Equal(t, 3, len(records))
@@ -237,7 +250,7 @@ func testStreamFromHead(t *testing.T, store workflow.Store) {
 	jtest.RequireNil(t, err)
 
 	cursor := rpatterns.MemCursorStore()
-	var records []workflow.TypedRecord[testUser]
+	var records []workflowstreamer.TypedRecord[testUser]
 	run(t, ctx, store, "example", cursor, exampleConsumer(&records), reflex.WithStreamFromHead())
 
 	require.Equal(t, 1, len(records))
@@ -256,9 +269,9 @@ type testUser struct {
 	Email  string
 }
 
-func exampleConsumer(records *[]workflow.TypedRecord[testUser]) func(ctx context.Context, fate fate.Fate, event *reflex.Event) error {
+func exampleConsumer(records *[]workflowstreamer.TypedRecord[testUser]) func(ctx context.Context, fate fate.Fate, event *reflex.Event) error {
 	return func(ctx context.Context, f fate.Fate, e *reflex.Event) error {
-		r, err := workflow.Translate[testUser](e)
+		r, err := workflowstreamer.Translate[testUser](e)
 		if err != nil {
 			return err
 		}

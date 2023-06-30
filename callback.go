@@ -37,7 +37,7 @@ func processCallback[T any](ctx context.Context, w *Workflow[T], destinationStat
 		return err
 	}
 
-	isStart := w.startingPoints[destinationStatus]
 	isEnd := w.endPoints[destinationStatus]
-	return w.store.Store(ctx, key, destinationStatus, object, isStart, isEnd)
+	// isStart is only true at time of trigger and thus default set to false
+	return w.store.Store(ctx, key, destinationStatus, object, false, isEnd)
 }

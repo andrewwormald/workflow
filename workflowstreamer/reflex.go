@@ -2,14 +2,15 @@ package workflowstreamer
 
 import (
 	"context"
+	"github.com/andrewwormald/workflow/workflowpb"
+	"google.golang.org/protobuf/proto"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/andrewwormald/workflow"
 	"github.com/luno/jettison/errors"
 	"github.com/luno/reflex"
-
-	"github.com/andrewwormald/workflow"
 )
 
 var _ reflex.StreamClient = (*stream)(nil)
@@ -70,7 +71,7 @@ func (s *stream) Recv() (*reflex.Event, error) {
 
 	if s.prev.IDInt() == 0 && s.options.StreamFromHead {
 		e, err := s.store.LastRecordForWorkflow(s.ctx, s.workflowName)
-		if errors.Is(err, ErrEntryNotFound) {
+		if errors.Is(err, workflow.ErrRecordNotFound) {
 			// NoReturnErr: Handle with zero value if there are no entries to stream
 			e = &workflow.Record{}
 		} else if err != nil {
@@ -191,4 +192,42 @@ func (b *buffer) Pop() (*reflex.Event, error) {
 	e := b.buf[0]
 	b.buf = b.buf[1:]
 	return e, nil
+}
+
+type TypedRecord[T any] struct {
+	ID           int64
+	RunID        string
+	WorkflowName string
+	ForeignID    string
+	Status       string
+	IsStart      bool
+	IsEnd        bool
+	Object       T
+	CreatedAt    time.Time
+}
+
+func Translate[T any](e *reflex.Event) (*TypedRecord[T], error) {
+	var r workflowpb.Record
+	err := proto.Unmarshal(e.MetaData, &r)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to proto unmarshal record")
+	}
+
+	var t T
+	err = workflow.Unmarshal(r.Object, &t)
+	if err != nil {
+		return nil, err
+	}
+
+	return &TypedRecord[T]{
+		ID:           r.Id,
+		RunID:        r.RunId,
+		WorkflowName: r.WorkflowName,
+		ForeignID:    r.ForeignId,
+		Status:       r.Status,
+		IsStart:      r.IsStart,
+		IsEnd:        r.IsEnd,
+		Object:       t,
+		CreatedAt:    r.CreatedAt.AsTime(),
+	}, nil
 }

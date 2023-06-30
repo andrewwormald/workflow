@@ -33,33 +33,6 @@ type Store struct {
 	timeouts           []*workflow.Timeout
 }
 
-func (s *Store) LastRecordForWorkflow(ctx context.Context, workflowName string) (*workflow.Record, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.workflowIndex[workflowName][len(s.workflowIndex[workflowName])-1], nil
-}
-
-func (s *Store) WorkflowBatch(ctx context.Context, workflowName string, fromID int64, size int) ([]*workflow.Record, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var batch []*workflow.Record
-	for _, record := range s.workflowIndex[workflowName] {
-		if len(batch) >= size {
-			break
-		}
-
-		if record.ID <= fromID {
-			continue
-		}
-
-		batch = append(batch, record)
-	}
-
-	return batch, nil
-}
-
 func (s *Store) Store(ctx context.Context, key workflow.Key, status string, object []byte, isStart, isEnd bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,6 +46,7 @@ func (s *Store) Store(ctx context.Context, key workflow.Key, status string, obje
 		Object:       object,
 		IsStart:      isStart,
 		IsEnd:        isEnd,
+		CreatedAt:    time.Now(),
 	}
 
 	uk := uniqueKey(key.WorkflowName, key.ForeignID, key.RunID)
@@ -131,21 +105,6 @@ func (s *Store) Find(ctx context.Context, key workflow.Key, status string) (*wor
 		}
 
 		return record, nil
-	}
-
-	return nil, errors.Wrap(workflow.ErrRecordNotFound, "")
-}
-
-func (s *Store) Lookup(ctx context.Context, id int64) (*workflow.Record, error) {
-	s.tmu.Lock()
-	defer s.tmu.Unlock()
-
-	for _, records := range s.workflowIndex {
-		for _, record := range records {
-			if record.ID == id {
-				return record, nil
-			}
-		}
 	}
 
 	return nil, errors.Wrap(workflow.ErrRecordNotFound, "")
@@ -242,6 +201,33 @@ func (s *Store) LastRunID(ctx context.Context, workflowName string, foreignID st
 	}
 
 	return "", errors.Wrap(workflow.ErrRunIDNotFound, "")
+}
+
+func (s *Store) LastRecordForWorkflow(ctx context.Context, workflowName string) (*workflow.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.workflowIndex[workflowName][len(s.workflowIndex[workflowName])-1], nil
+}
+
+func (s *Store) WorkflowBatch(ctx context.Context, workflowName string, fromID int64, size int) ([]*workflow.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var batch []*workflow.Record
+	for _, record := range s.workflowIndex[workflowName] {
+		if len(batch) >= size {
+			break
+		}
+
+		if record.ID <= fromID {
+			continue
+		}
+
+		batch = append(batch, record)
+	}
+
+	return batch, nil
 }
 
 func (s *Store) incrementID() {

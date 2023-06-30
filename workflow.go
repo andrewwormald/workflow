@@ -16,14 +16,13 @@ import (
 func BuildNew[T any](name string, store Store, cursor Cursor) *Builder[T] {
 	return &Builder[T]{
 		workflow: &Workflow[T]{
-			Name: name,
-			// Add options to provide clock for testing
+			Name:      name,
 			clock:     clock.RealClock{},
 			store:     store,
 			cursor:    cursor,
 			processes: make(map[string][]process[T]),
 			callback:  make(map[string][]callback[T]),
-			timeouts:  make(map[string][]timeout[T]),
+			timeouts:  make(map[string]timeouts[T]),
 		},
 	}
 }
@@ -31,8 +30,9 @@ func BuildNew[T any](name string, store Store, cursor Cursor) *Builder[T] {
 type Workflow[T any] struct {
 	Name string
 
-	clock            clock.Clock
-	pollingFrequency time.Duration
+	clock                   clock.Clock
+	defaultPollingFrequency time.Duration
+	defaultErrBackOff       time.Duration
 
 	once sync.Once
 
@@ -41,11 +41,10 @@ type Workflow[T any] struct {
 
 	processes map[string][]process[T]
 	callback  map[string][]callback[T]
-	timeouts  map[string][]timeout[T]
+	timeouts  map[string]timeouts[T]
 
-	graph          map[string][]string
-	startingPoints map[string]bool
-	endPoints      map[string]bool
+	graph     map[string][]string
+	endPoints map[string]bool
 }
 
 func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingStatus Status, opts ...TriggerOption[T]) (runID string, err error) {
@@ -93,8 +92,12 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 	}
 
 	key := MakeKey(w.Name, foreignID, uid.String())
-	isStart := w.startingPoints[startingStatus.String()]
-	isEnd := w.endPoints[startingStatus.String()]
+	// isStart is always true when being stored as the trigger as it is the beginning of the workflow
+	isStart := true
+
+	// isEnd is always false as there should always be more than one node in the graph so that there can be a
+	// transition between statuses / states.
+	isEnd := false
 	return key.RunID, w.store.Store(ctx, key, startingStatus.String(), object, isStart, isEnd)
 }
 
@@ -111,9 +114,31 @@ func WithInitialValue[T any](t *T) TriggerOption[T] {
 	}
 }
 
-func (w *Workflow[T]) Await(ctx context.Context, foreignID string, runID string, status Status) (*T, error) {
+func (w *Workflow[T]) Await(ctx context.Context, foreignID string, runID string, status Status, opts ...AwaitOption) (*T, error) {
+	var opt awaitOpts
+	for _, option := range opts {
+		option(&opt)
+	}
+
+	pollFrequency := w.defaultPollingFrequency
+	if opt.pollFrequency.Nanoseconds() != 0 {
+		pollFrequency = opt.pollFrequency
+	}
+
 	key := MakeKey(w.Name, foreignID, runID)
-	return awaitWorkflowStatusByForeignID[T](ctx, w, key, status.String())
+	return awaitWorkflowStatusByForeignID[T](ctx, w, key, status.String(), pollFrequency)
+}
+
+type awaitOpts struct {
+	pollFrequency time.Duration
+}
+
+type AwaitOption func(o *awaitOpts)
+
+func WithPollingFrequency(d time.Duration) AwaitOption {
+	return func(o *awaitOpts) {
+		o.pollFrequency = d
+	}
 }
 
 func (w *Workflow[T]) Callback(ctx context.Context, foreignID string, status Status, payload io.Reader) error {
@@ -127,7 +152,7 @@ func (w *Workflow[T]) Callback(ctx context.Context, foreignID string, status Sta
 	return nil
 }
 
-func (w *Workflow[T]) RunBackground(ctx context.Context) {
+func (w *Workflow[T]) Run(ctx context.Context) {
 	// Ensure that the background consumers are only initialized once
 	w.once.Do(func() {
 		for currentStatus, processes := range w.processes {
@@ -144,9 +169,9 @@ func (w *Workflow[T]) RunBackground(ctx context.Context) {
 			}
 		}
 
-		for status, timeoutsForStatus := range w.timeouts {
-			go timeoutRunner(ctx, w, status, timeoutsForStatus)
-			go timeoutAutoInserter(ctx, w, status, timeoutsForStatus)
+		for status, timeouts := range w.timeouts {
+			go timeoutRunner(ctx, w, status, timeouts)
+			go timeoutAutoInserter(ctx, w, status, timeouts)
 		}
 	})
 }
@@ -173,25 +198,27 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 	}
 }
 
-func timeoutRunner[T any](ctx context.Context, w *Workflow[T], currentStatus string, timeoutsForStatus []timeout[T]) {
+func timeoutRunner[T any](ctx context.Context, w *Workflow[T], currentStatus string, timeouts timeouts[T]) {
 	for {
-		err := pollTimeouts(ctx, w, currentStatus, timeoutsForStatus)
+		err := pollTimeouts(ctx, w, currentStatus, timeouts)
 		if err != nil {
 			log.Error(ctx, errors.Wrap(err, "runner error"))
 		}
 
 		select {
 		case <-ctx.Done():
-		case <-time.After(time.Minute): // Incorporate a 1 - minute backoff
+		case <-time.After(timeouts.ErrBackOff): // Incorporate a 1 - minute backoff
 		}
 	}
 }
 
-func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status string, timeoutConfigs []timeout[T]) {
+func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) {
 	for {
 		err := streamAndConsume(ctx, w, status, process[T]{
+			PollingFrequency: timeouts.PollingFrequency,
+			ErrBackOff:       timeouts.ErrBackOff,
 			Consumer: func(ctx context.Context, key Key, t *T) (bool, error) {
-				for _, config := range timeoutConfigs {
+				for _, config := range timeouts.Transitions {
 					expireAt := w.clock.Now().Add(config.Duration)
 
 					err := w.store.CreateTimeout(ctx, key, status, expireAt)
@@ -203,6 +230,7 @@ func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status stri
 				// Never update state even when successful
 				return false, nil
 			},
+			ParallelCount: 1,
 		}, 1, 1)
 		if errors.Is(err, ErrStreamingClosed) {
 			log.Info(ctx, "shutting down process - timeout auto inserter", j.MKV{
@@ -215,20 +243,28 @@ func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status stri
 
 		select {
 		case <-ctx.Done():
-		case <-time.After(time.Minute): // Incorporate a 1 - minute backoff
+		case <-time.After(timeouts.ErrBackOff):
 		}
 	}
 }
 
 type process[T any] struct {
-	Consumer          ConsumerFunc[T]
+	PollingFrequency  time.Duration
+	ErrBackOff        time.Duration
 	DestinationStatus Status
+	Consumer          ConsumerFunc[T]
 	ParallelCount     int64
 }
 
 type callback[T any] struct {
 	DestinationStatus Status
 	CallbackFunc      CallbackFunc[T]
+}
+
+type timeouts[T any] struct {
+	PollingFrequency time.Duration
+	ErrBackOff       time.Duration
+	Transitions      []timeout[T]
 }
 
 type timeout[T any] struct {

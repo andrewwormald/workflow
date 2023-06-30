@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/andrewwormald/workflow"
-	"github.com/andrewwormald/workflow/memcursor"
-	"github.com/andrewwormald/workflow/memstore"
-	"github.com/luno/jettison/jtest"
-	"github.com/stretchr/testify/require"
+	"github.com/luno/jettison/errors"
 	"io"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/luno/jettison/jtest"
+	"github.com/stretchr/testify/require"
+	clock_testing "k8s.io/utils/clock/testing"
+
+	"github.com/andrewwormald/workflow"
+	"github.com/andrewwormald/workflow/memcursor"
+	"github.com/andrewwormald/workflow/memstore"
 )
 
 type MyType struct {
@@ -80,6 +84,7 @@ type ExternalOTP struct {
 
 func TestWorkflow(t *testing.T) {
 	// This introduces a validation element to the producing of events.
+	ctx := context.Background()
 	store := memstore.New()
 	cursor := memcursor.New()
 
@@ -91,12 +96,13 @@ func TestWorkflow(t *testing.T) {
 	b.AddStep(StatusCellphoneNumberSubmitted, sendOTP, StatusOTPSent, workflow.WithParallelCount(5))
 	b.AddCallback(StatusOTPSent, otpCallback, StatusOTPVerified)
 	b.AddTimeout(StatusOTPVerified, waitForAccountCoolDown, time.Hour, StatusCompleted)
-	wf := b.Complete()
 
-	ctx := context.Background()
+	clock := clock_testing.NewFakeClock(time.Now())
+	wf := b.Build(ctx, workflow.WithClock(clock))
+
+	wf.Run(ctx)
+
 	fid := strconv.FormatInt(expectedUserID, 10)
-
-	wf.RunBackground(ctx)
 
 	mt := MyType{
 		UserID: expectedUserID,
@@ -119,7 +125,10 @@ func TestWorkflow(t *testing.T) {
 		OTPCode: expectedOTP,
 	})
 
-	workflow.ChangeTimeOn(t, wf, fid, runID, StatusOTPVerified, time.Now().Add(time.Hour))
+	workflow.AwaitTimeoutInsert(t, wf, StatusOTPVerified)
+
+	// Advance time forward by one hour to trigger the timeout
+	clock.Step(time.Hour)
 
 	_, err = wf.Await(ctx, fid, runID, StatusCompleted)
 	jtest.RequireNil(t, err)
@@ -140,6 +149,45 @@ func TestWorkflow(t *testing.T) {
 	require.Equal(t, expectedCellphone, actual.Cellphone)
 	require.Equal(t, expectedOTP, actual.OTP)
 	require.Equal(t, expectedOTPVerified, actual.OTPVerified)
+}
+
+func TestPollingFrequency(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	cursor := memcursor.New()
+
+	b := workflow.BuildNew[MyType]("user sign up", store, cursor)
+
+	b.AddStep(StatusInitiated, func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, StatusProfileCreated, workflow.WithStepPollingFrequency(100*time.Millisecond))
+
+	b.AddTimeout(StatusProfileCreated, func(ctx context.Context, key workflow.Key, t *MyType, now time.Time) (bool, error) {
+		return true, nil
+	}, time.Hour, StatusCompleted, workflow.WithTimeoutPollingFrequency(100*time.Millisecond))
+
+	clock := clock_testing.NewFakeClock(time.Now())
+	wf := b.Build(ctx, workflow.WithClock(clock))
+	wf.Run(ctx)
+
+	start := time.Now()
+
+	runID, err := wf.Trigger(ctx, "example", StatusInitiated)
+	jtest.RequireNil(t, err)
+
+	_, err = wf.Await(ctx, "example", runID, StatusProfileCreated, workflow.WithPollingFrequency(300*time.Millisecond))
+	jtest.RequireNil(t, err)
+
+	// Advance time forward by one hour to trigger the timeout
+	clock.Step(time.Hour)
+
+	_, err = wf.Await(ctx, "example", runID, StatusCompleted)
+	jtest.RequireNil(t, err)
+
+	end := time.Now()
+
+	require.True(t, end.Sub(start) < 2*time.Second)
+	require.True(t, end.Sub(start) > 1*time.Second)
 }
 
 var (
@@ -233,4 +281,42 @@ func otpCallback(ctx context.Context, key workflow.Key, mt *MyType, r io.Reader)
 func waitForAccountCoolDown(ctx context.Context, key workflow.Key, mt *MyType, now time.Time) (bool, error) {
 	fmt.Println(fmt.Sprintf("completed waiting for account cool down %v at %v", *mt, now.String()))
 	return true, nil
+}
+
+func TestNot(t *testing.T) {
+	t.Run("Not - flip true to false", func(t *testing.T) {
+		fn := workflow.Not[string](func(ctx context.Context, key workflow.Key, s *string) (bool, error) {
+			return true, nil
+		})
+
+		key := workflow.MakeKey("w", "f", "r")
+		s := "example"
+		actual, err := fn(context.Background(), key, &s)
+		jtest.RequireNil(t, err)
+		require.False(t, actual)
+	})
+
+	t.Run("Not - flip false to true", func(t *testing.T) {
+		fn := workflow.Not[string](func(ctx context.Context, key workflow.Key, s *string) (bool, error) {
+			return false, nil
+		})
+
+		key := workflow.MakeKey("w", "f", "r")
+		s := "example"
+		actual, err := fn(context.Background(), key, &s)
+		jtest.RequireNil(t, err)
+		require.True(t, actual)
+	})
+
+	t.Run("Not - propagate error and do not flip result to true", func(t *testing.T) {
+		fn := workflow.Not[string](func(ctx context.Context, key workflow.Key, s *string) (bool, error) {
+			return false, errors.New("expected error")
+		})
+
+		key := workflow.MakeKey("w", "f", "r")
+		s := "example"
+		actual, err := fn(context.Background(), key, &s)
+		jtest.Require(t, err, errors.New("expected error"))
+		require.False(t, actual)
+	})
 }

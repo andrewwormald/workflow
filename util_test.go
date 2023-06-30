@@ -8,10 +8,13 @@ import (
 	"time"
 
 	"github.com/luno/jettison/jtest"
-	clock_testing "k8s.io/utils/clock/testing"
 )
 
 func TriggerCallbackOn[T any, Payload any](t *testing.T, w *Workflow[T], foreignID, runID string, waitFor Status, p Payload) {
+	if t == nil {
+		panic("TriggerCallbackOn can only be used for testing")
+	}
+
 	ctx := context.TODO()
 
 	_, err := w.Await(ctx, foreignID, runID, waitFor)
@@ -24,18 +27,27 @@ func TriggerCallbackOn[T any, Payload any](t *testing.T, w *Workflow[T], foreign
 	jtest.RequireNil(t, err)
 }
 
-func ChangeTimeOn[T any](t *testing.T, w *Workflow[T], foreignID, runID string, waitFor Status, newTime time.Time) {
-	ctx := context.TODO()
+func AwaitTimeoutInsert[T any](t *testing.T, w *Workflow[T], status Status) {
+	if t == nil {
+		panic("AwaitTimeout can only be used for testing")
+	}
 
-	_, err := w.Await(ctx, foreignID, runID, waitFor)
+	ctx := context.TODO()
+	r, err := w.store.LastRecordForWorkflow(ctx, w.Name)
 	jtest.RequireNil(t, err)
 
-	// Provide enough time for the timeout to be created
-	time.Sleep(w.pollingFrequency * 2)
+	runID, err := w.store.LastRunID(ctx, w.Name, r.ForeignID)
+	jtest.RequireNil(t, err)
 
-	// Ensure to update the provided time to account for the sleeping to ensure the timeout is inserted before the
-	// clock is changed.
-	newTime = newTime.Add(w.pollingFrequency * 2)
+	timeouts := w.timeouts[status.String()]
+	pf := timeouts.PollingFrequency
+	if pf.Nanoseconds() == 0 {
+		pf = w.defaultPollingFrequency
+	}
 
-	w.clock = clock_testing.NewFakeClock(newTime)
+	time.Sleep(pf * 2)
+
+	_, err = w.Await(ctx, r.ForeignID, runID, status, WithPollingFrequency(pf*2))
+	jtest.RequireNil(t, err)
+
 }
