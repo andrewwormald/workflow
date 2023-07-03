@@ -18,7 +18,7 @@ Here is a fun and simple example of a workflow where we emulate sending a tradin
 ```bash
 go run ./example
 ```
-
+## Step by Step example:
 ### Step 1: Taking a simple object 
 ```go
 type YinYang struct {
