@@ -10,7 +10,7 @@ import (
 	"github.com/luno/jettison/jtest"
 )
 
-func TriggerCallbackOn[T any, Payload any](t *testing.T, w *Workflow[T], foreignID, runID string, waitFor Status, p Payload) {
+func TriggerCallbackOn[T any, Payload any](t *testing.T, w *Workflow[T], foreignID, runID string, waitFor string, p Payload) {
 	if t == nil {
 		panic("TriggerCallbackOn can only be used for testing")
 	}
@@ -27,7 +27,7 @@ func TriggerCallbackOn[T any, Payload any](t *testing.T, w *Workflow[T], foreign
 	jtest.RequireNil(t, err)
 }
 
-func AwaitTimeoutInsert[T any](t *testing.T, w *Workflow[T], status Status) {
+func AwaitTimeoutInsert[T any](t *testing.T, w *Workflow[T], status string) {
 	if t == nil {
 		panic("AwaitTimeout can only be used for testing")
 	}
@@ -39,7 +39,7 @@ func AwaitTimeoutInsert[T any](t *testing.T, w *Workflow[T], status Status) {
 	runID, err := w.store.LastRunID(ctx, w.Name, r.ForeignID)
 	jtest.RequireNil(t, err)
 
-	timeouts := w.timeouts[status.String()]
+	timeouts := w.timeouts[status]
 	pf := timeouts.PollingFrequency
 	if pf.Nanoseconds() == 0 {
 		pf = w.defaultPollingFrequency

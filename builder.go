@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"context"
 	"k8s.io/utils/clock"
 	"path"
 	"time"
@@ -11,7 +10,7 @@ type Builder[T any] struct {
 	workflow *Workflow[T]
 }
 
-func (b *Builder[T]) AddStep(from Status, c ConsumerFunc[T], to Status, opts ...StepOption) {
+func (b *Builder[T]) AddStep(from string, c ConsumerFunc[T], to string, opts ...StepOption) {
 	p := process[T]{
 		DestinationStatus: to,
 		Consumer:          c,
@@ -36,7 +35,7 @@ func (b *Builder[T]) AddStep(from Status, c ConsumerFunc[T], to Status, opts ...
 		p.ErrBackOff = so.errBackOff
 	}
 
-	b.workflow.processes[from.String()] = append(b.workflow.processes[from.String()], p)
+	b.workflow.processes[from] = append(b.workflow.processes[from], p)
 }
 
 type stepOptions struct {
@@ -65,13 +64,13 @@ func WithStepErrBackOff(d time.Duration) StepOption {
 	}
 }
 
-func (b *Builder[T]) AddCallback(from Status, fn CallbackFunc[T], to Status) {
+func (b *Builder[T]) AddCallback(from string, fn CallbackFunc[T], to string) {
 	c := callback[T]{
 		DestinationStatus: to,
 		CallbackFunc:      fn,
 	}
 
-	b.workflow.callback[from.String()] = append(b.workflow.callback[from.String()], c)
+	b.workflow.callback[from] = append(b.workflow.callback[from], c)
 }
 
 type timeoutOptions struct {
@@ -93,11 +92,10 @@ func WithTimeoutErrBackOff(d time.Duration) TimeoutOption {
 	}
 }
 
-func (b *Builder[T]) AddTimeout(from Status, tf TimeoutFunc[T], duration time.Duration, to Status, opts ...TimeoutOption) {
-	timeouts, ok := b.workflow.timeouts[from.String()]
-	if ok {
+func (b *Builder[T]) AddTimeout(from string, tf TimeoutFunc[T], time time.Time, to string, opts ...TimeoutOption) {
+	timeouts := b.workflow.timeouts[from]
 
-	}
+	duration := time.Sub(b.workflow.clock.Now())
 
 	t := timeout[T]{
 		DestinationStatus: to,
@@ -122,16 +120,47 @@ func (b *Builder[T]) AddTimeout(from Status, tf TimeoutFunc[T], duration time.Du
 
 	timeouts.Transitions = append(timeouts.Transitions, t)
 
-	b.workflow.timeouts[from.String()] = timeouts
+	b.workflow.timeouts[from] = timeouts
 }
 
-func (b *Builder[T]) Build(ctx context.Context, opts ...BuildOption) *Workflow[T] {
+func (b *Builder[T]) AddTimeoutWithDuration(from string, tf TimeoutFunc[T], duration time.Duration, to string, opts ...TimeoutOption) {
+	timeouts := b.workflow.timeouts[from]
+
+	t := timeout[T]{
+		DestinationStatus: to,
+		Duration:          duration,
+		TimeoutFunc:       tf,
+	}
+
+	var topt timeoutOptions
+	for _, opt := range opts {
+		opt(&topt)
+	}
+
+	timeouts.PollingFrequency = b.workflow.defaultPollingFrequency
+	if topt.pollingFrequency.Nanoseconds() != 0 {
+		timeouts.PollingFrequency = topt.pollingFrequency
+	}
+
+	timeouts.ErrBackOff = b.workflow.defaultErrBackOff
+	if topt.errBackOff.Nanoseconds() != 0 {
+		timeouts.ErrBackOff = topt.errBackOff
+	}
+
+	timeouts.Transitions = append(timeouts.Transitions, t)
+
+	b.workflow.timeouts[from] = timeouts
+}
+
+func (b *Builder[T]) Build(opts ...BuildOption) *Workflow[T] {
 	var bo buildOptions
 	for _, opt := range opts {
 		opt(&bo)
 	}
 
-	b.workflow.clock = bo.clock
+	if bo.clock != nil {
+		b.workflow.clock = bo.clock
+	}
 
 	if b.workflow.defaultPollingFrequency.Milliseconds() == 0 {
 		b.workflow.defaultPollingFrequency = time.Second
@@ -160,36 +189,36 @@ func (b *Builder[T]) buildGraph() map[string][]string {
 	dedupe := make(map[string]bool)
 	for s, i := range b.workflow.processes {
 		for _, p := range i {
-			key := path.Join(s, p.DestinationStatus.String())
+			key := path.Join(s, p.DestinationStatus)
 			if dedupe[key] {
 				continue
 			}
 
-			graph[s] = append(graph[s], p.DestinationStatus.String())
+			graph[s] = append(graph[s], p.DestinationStatus)
 			dedupe[key] = true
 		}
 	}
 
 	for s, i := range b.workflow.callback {
 		for _, c := range i {
-			key := path.Join(s, c.DestinationStatus.String())
+			key := path.Join(s, c.DestinationStatus)
 			if dedupe[key] {
 				continue
 			}
 
-			graph[s] = append(graph[s], c.DestinationStatus.String())
+			graph[s] = append(graph[s], c.DestinationStatus)
 			dedupe[key] = true
 		}
 	}
 
 	for s, t := range b.workflow.timeouts {
 		for _, t := range t.Transitions {
-			key := path.Join(s, t.DestinationStatus.String())
+			key := path.Join(s, t.DestinationStatus)
 			if dedupe[key] {
 				continue
 			}
 
-			graph[s] = append(graph[s], t.DestinationStatus.String())
+			graph[s] = append(graph[s], t.DestinationStatus)
 			dedupe[key] = true
 		}
 	}

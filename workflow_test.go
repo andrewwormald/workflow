@@ -32,41 +32,15 @@ func (m MyType) ForeignID() string {
 	return strconv.FormatInt(m.UserID, 10)
 }
 
-type Status int
-
-func (s Status) String() string {
-	switch s {
-	case StatusInitiated:
-		return "Initiated"
-	case StatusProfileCreated:
-		return "Profile Created"
-	case StatusEmailConfirmationSent:
-		return "Email Confirmation Sent"
-	case StatusEmailVerified:
-		return "Email Verified"
-	case StatusCellphoneNumberSubmitted:
-		return "Cellphone Number Submitted"
-	case StatusOTPSent:
-		return "OTP Sent"
-	case StatusOTPVerified:
-		return "OTP Verified"
-	case StatusCompleted:
-		return "Completed"
-	default:
-		return "Unknown"
-	}
-}
-
 const (
-	StatusUnknown                  Status = 0
-	StatusInitiated                Status = 1
-	StatusProfileCreated           Status = 2
-	StatusEmailConfirmationSent    Status = 3
-	StatusEmailVerified            Status = 4
-	StatusCellphoneNumberSubmitted Status = 5
-	StatusOTPSent                  Status = 6
-	StatusOTPVerified              Status = 7
-	StatusCompleted                Status = 9
+	StatusInitiated                = "Initiated"
+	StatusProfileCreated           = "Profile Created"
+	StatusEmailConfirmationSent    = "Email Confirmation Sent"
+	StatusEmailVerified            = "Email Verified"
+	StatusCellphoneNumberSubmitted = "Cellphone Number Submitted"
+	StatusOTPSent                  = "OTP Sent"
+	StatusOTPVerified              = "OTP Verified"
+	StatusCompleted                = "Completed"
 )
 
 type ExternalEmailVerified struct {
@@ -95,10 +69,10 @@ func TestWorkflow(t *testing.T) {
 	b.AddCallback(StatusEmailVerified, cellphoneNumberCallback, StatusCellphoneNumberSubmitted)
 	b.AddStep(StatusCellphoneNumberSubmitted, sendOTP, StatusOTPSent, workflow.WithParallelCount(5))
 	b.AddCallback(StatusOTPSent, otpCallback, StatusOTPVerified)
-	b.AddTimeout(StatusOTPVerified, waitForAccountCoolDown, time.Hour, StatusCompleted)
+	b.AddTimeoutWithDuration(StatusOTPVerified, waitForAccountCoolDown, time.Hour, StatusCompleted)
 
 	clock := clock_testing.NewFakeClock(time.Now())
-	wf := b.Build(ctx, workflow.WithClock(clock))
+	wf := b.Build(workflow.WithClock(clock))
 
 	wf.Run(ctx)
 
@@ -136,7 +110,7 @@ func TestWorkflow(t *testing.T) {
 	key := workflow.MakeKey("user sign up", fid, runID)
 	r, err := store.LookupLatest(ctx, key)
 	jtest.RequireNil(t, err)
-	require.Equal(t, expectedFinalStatus.String(), r.Status)
+	require.Equal(t, expectedFinalStatus, r.Status)
 
 	var actual MyType
 	err = workflow.Unmarshal(r.Object, &actual)
@@ -162,12 +136,12 @@ func TestPollingFrequency(t *testing.T) {
 		return true, nil
 	}, StatusProfileCreated, workflow.WithStepPollingFrequency(100*time.Millisecond))
 
-	b.AddTimeout(StatusProfileCreated, func(ctx context.Context, key workflow.Key, t *MyType, now time.Time) (bool, error) {
+	b.AddTimeoutWithDuration(StatusProfileCreated, func(ctx context.Context, key workflow.Key, t *MyType, now time.Time) (bool, error) {
 		return true, nil
 	}, time.Hour, StatusCompleted, workflow.WithTimeoutPollingFrequency(100*time.Millisecond))
 
 	clock := clock_testing.NewFakeClock(time.Now())
-	wf := b.Build(ctx, workflow.WithClock(clock))
+	wf := b.Build(workflow.WithClock(clock))
 	wf.Run(ctx)
 
 	start := time.Now()
@@ -186,8 +160,8 @@ func TestPollingFrequency(t *testing.T) {
 
 	end := time.Now()
 
-	require.True(t, end.Sub(start) < 2*time.Second)
-	require.True(t, end.Sub(start) > 1*time.Second)
+	fmt.Println(end.Sub(start))
+	require.True(t, end.Sub(start) < 1*time.Second)
 }
 
 var (

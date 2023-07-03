@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"io"
 )
@@ -21,6 +22,12 @@ func processCallback[T any](ctx context.Context, w *Workflow[T], destinationStat
 	err = Unmarshal(latest.Object, &t)
 	if err != nil {
 		return err
+	}
+
+	if payload == nil {
+		// Ensure that an empty value implementation of io.Reader is passed in instead of nil to avoid panic and
+		// rather allow an unmarshalling error.
+		payload = bytes.NewReader([]byte{})
 	}
 
 	ok, err := fn(ctx, key, &t, payload)

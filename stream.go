@@ -77,10 +77,10 @@ func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string,
 					return err
 				}
 
-				isEnd := w.endPoints[p.DestinationStatus.String()]
+				isEnd := w.endPoints[p.DestinationStatus]
 
 				// isStart is only true at time of trigger and thus default set to false
-				err = w.store.Store(ctx, key, p.DestinationStatus.String(), b, false, isEnd)
+				err = w.store.Store(ctx, key, p.DestinationStatus, b, false, isEnd)
 				if err != nil {
 					return err
 				}
@@ -189,10 +189,10 @@ func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, tim
 						return err
 					}
 
-					isEnd := w.endPoints[config.DestinationStatus.String()]
+					isEnd := w.endPoints[config.DestinationStatus]
 
 					// isStart is only true at time of trigger and thus default set to false
-					err = w.store.Store(ctx, key, config.DestinationStatus.String(), b, false, isEnd)
+					err = w.store.Store(ctx, key, config.DestinationStatus, b, false, isEnd)
 					if err != nil {
 						return err
 					}
