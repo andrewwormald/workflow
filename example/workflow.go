@@ -23,7 +23,7 @@ var (
 )
 
 func NewSendTradingSummaryWorkflow(store workflow.Store, cursor workflow.Cursor, sender Sender, tradeCollector TradeCollector, clock clock.Clock) *workflow.Workflow[TradeSummary] {
-	b := workflow.BuildNew[TradeSummary]("user account report", store, cursor)
+	b := workflow.NewBuilder[TradeSummary]("user account report", store, cursor)
 
 	now := clock.Now()
 	reportSendDate := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)

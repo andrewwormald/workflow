@@ -135,3 +135,62 @@ func main() {
 		panic(err)
 	}
 }
+
+type External struct {
+	Thing string
+}
+
+func example() {
+	type YinYang struct {
+		Yin  bool
+		Yang bool
+	}
+
+	builder := workflow.NewBuilder[YinYang]("example", store, store)
+	builder.AddStep("Start", func(ctx context.Context, key workflow.Key, yy *YinYang) (bool, error) {
+		yy.Yin = true
+		return true, nil
+	}, "Middle")
+
+	builder.AddTimeoutWithDuration(
+		"Middle",
+		func(ctx context.Context, key workflow.Key, t *YinYang, now time.Time) (bool, error) {
+			yy.Yang = true
+			return true, nil
+		},
+		24*time.Hour, // one day
+		"End",
+	)
+
+	workflow := builder.Build()
+
+	ctx := context.Background()
+	workflow.Run(ctx)
+
+	foreignID := "andrew@workflow.com"
+	runID, err := workflow.Trigger(ctx, foreignID, "Start")
+	if err != nil {
+		panic(err)
+	}
+
+	yinYang, err := workflow.Await(ctx, foreignID, runID, "End")
+	if err != nil {
+		panic(err)
+	}
+
+	external := External{
+		Thing: "Something",
+	}
+
+	b, err := json.Marshal(external)
+	if err != nil {
+		panic(err)
+	}
+
+	reader := bytes.NewReader(b)
+
+	err = workflow.Callback(ctx, foreignID, "Middle", reader)
+	if err != nil {
+		panic(err)
+	}
+}

@@ -11,7 +11,7 @@ import (
 )
 
 func TestDetermineEndPoints(t *testing.T) {
-	b := BuildNew[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points", nil, nil)
 	b.AddStep("Start", nil, "Middle")
 	b.AddStep("Middle", nil, "End")
 	wf := b.Build()
@@ -24,7 +24,7 @@ func TestDetermineEndPoints(t *testing.T) {
 }
 
 func TestWithStepErrBackOff(t *testing.T) {
-	b := BuildNew[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points", nil, nil)
 	b.AddStep("Start", nil, "Middle", WithStepErrBackOff(time.Minute))
 	wf := b.Build()
 
@@ -32,7 +32,7 @@ func TestWithStepErrBackOff(t *testing.T) {
 }
 
 func TestWithStepPollingFrequency(t *testing.T) {
-	b := BuildNew[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points", nil, nil)
 	b.AddStep("Start", nil, "Middle", WithStepPollingFrequency(time.Minute))
 	wf := b.Build()
 
@@ -40,7 +40,7 @@ func TestWithStepPollingFrequency(t *testing.T) {
 }
 
 func TestStepDestinationStatus(t *testing.T) {
-	b := BuildNew[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points", nil, nil)
 	b.AddStep("Start", nil, "Middle")
 	wf := b.Build()
 
@@ -48,7 +48,7 @@ func TestStepDestinationStatus(t *testing.T) {
 }
 
 func TestWithParallelCount(t *testing.T) {
-	b := BuildNew[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points", nil, nil)
 	b.AddStep("Start", nil, "Middle", WithParallelCount(100))
 	wf := b.Build()
 
@@ -58,7 +58,7 @@ func TestWithParallelCount(t *testing.T) {
 func TestWithClock(t *testing.T) {
 	now := time.Now()
 	clock := clock_testing.NewFakeClock(now)
-	b := BuildNew[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points", nil, nil)
 	wf := b.Build(WithClock(clock))
 
 	clock.Step(time.Hour)
@@ -71,7 +71,7 @@ func TestAddingCallbacks(t *testing.T) {
 		return true, nil
 	}
 
-	b := BuildNew[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points", nil, nil)
 	b.AddCallback("Start", exampleFn, "End")
 	wf := b.Build()
 

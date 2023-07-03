@@ -62,7 +62,7 @@ func TestWorkflow(t *testing.T) {
 	store := memstore.New()
 	cursor := memcursor.New()
 
-	b := workflow.BuildNew[MyType]("user sign up", store, cursor)
+	b := workflow.NewBuilder[MyType]("user sign up", store, cursor)
 	b.AddStep(StatusInitiated, createProfile, StatusProfileCreated)
 	b.AddStep(StatusProfileCreated, sendEmailConfirmation, StatusEmailConfirmationSent, workflow.WithParallelCount(5))
 	b.AddCallback(StatusEmailConfirmationSent, emailVerifiedCallback, StatusEmailVerified)
@@ -130,7 +130,7 @@ func TestPollingFrequency(t *testing.T) {
 	store := memstore.New()
 	cursor := memcursor.New()
 
-	b := workflow.BuildNew[MyType]("user sign up", store, cursor)
+	b := workflow.NewBuilder[MyType]("user sign up", store, cursor)
 
 	b.AddStep(StatusInitiated, func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
 		return true, nil

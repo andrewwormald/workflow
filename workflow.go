@@ -13,7 +13,7 @@ import (
 	"k8s.io/utils/clock"
 )
 
-func BuildNew[T any](name string, store Store, cursor Cursor) *Builder[T] {
+func NewBuilder[T any](name string, store Store, cursor Cursor) *Builder[T] {
 	return &Builder[T]{
 		workflow: &Workflow[T]{
 			Name:                    name,
