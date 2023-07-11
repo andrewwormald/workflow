@@ -49,7 +49,7 @@ workflow := b.Build()
 workflow.Run(ctx)
 ```
 
-### Step 4: Call Run to launch the consumers in the background
+### Step 4: Triggering the workflow
 ```go
 foreignID := "andrew@workflow.com"
 runID, err := workflow.Trigger(ctx, foreignID, "Start")
@@ -57,6 +57,24 @@ if err != nil {
     panic(err)
 }
 ```
+### OR use the cron styled schedule trigger
+##### See the standard cron spec below that can be used for scheduling triggers
+```go
+foreignID := "andrew@workflow.com"
+runID, err := workflow.ScheduleTrigger(ctx, foreignID, "Start", "@monthly")
+if err != nil {
+    panic(err)
+}
+```
+
+| Entry |  Description   |   Equivalent to   |
+| :---:   |:---:|:----:|
+| @yearly (or @annually) | Run once a year at midnight of 1 January | 0 0 1 1 *  |
+| @monthly | Run once a month at midnight of the first day of the month | 0 0 1 * *  |
+| @weekly | Run once a week at midnight on Sunday morning | 0 0 * * 0  |
+| @daily (or @midnight) | Run once a day at midnight | 0 0 * * *  |
+| @hourly | Run once an hour at the beginning of the hour | 0 * * * *  |
+
 
 ### Step 5 A: If you wish for a async await pattern after calling Trigger
 ```go
@@ -136,6 +154,20 @@ builder.AddTimeoutWithDuration(
     "End",
 )
 ```
+
+## Testing
+
+One core focus of `workflow` is to be easily tested.
+
+The `testing.go` file houses utility functions for testing your workflow. Some other
+ useful patterns is to use `k8s.io/utils/clock/testing` testing clock to manipulate
+ time and ensure your functions are executing at the exact time and date that they should/ 
+
+`TriggerCallbackOn`: Allows you to easily simulate a callback when the workflow is at a specific
+ point in its flow.
+
+`AwaitTimeoutInsert`: AwaitTimoutInsert helps wait for the timout to be created after which you can use the clock
+ to change the time to speed up / skip the timeout process
 
 ## Authors
 

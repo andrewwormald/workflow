@@ -294,3 +294,89 @@ func TestNot(t *testing.T) {
 		require.False(t, actual)
 	})
 }
+
+func TestWorkflow_ScheduleTrigger(t *testing.T) {
+	now := time.Date(2023, time.April, 9, 8, 30, 0, 0, time.UTC)
+	clock := clock_testing.NewFakeClock(now)
+	store := memstore.New(memstore.WithClock(clock))
+	cursor := memcursor.New()
+	b := workflow.NewBuilder[MyType]("sync users", store, cursor)
+
+	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, "Collected users", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	b.AddStep("Collected users", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, "Synced users", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	wf := b.Build(workflow.WithClock(clock))
+	ctx := context.Background()
+	wf.Run(ctx)
+
+	// Grab the time from the clock for expectation as to the time we expect the entry to have
+	expectedTimestamp := clock.Now()
+
+	go func() {
+		err := wf.ScheduleTrigger(ctx, "andrew", "Started", "@monthly")
+		jtest.RequireNil(t, err)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	runID, err := store.LastRunID(ctx, "sync users", "andrew")
+	jtest.RequireNil(t, err)
+
+	key := workflow.MakeKey("sync users", "andrew", runID)
+	latest, err := store.LookupLatest(ctx, key)
+	jtest.RequireNil(t, err)
+
+	var mt MyType
+	serialised, err := workflow.Marshal(&mt)
+	jtest.RequireNil(t, err)
+
+	expected := workflow.Record{
+		ID:           3,
+		RunID:        runID,
+		WorkflowName: "sync users",
+		ForeignID:    "andrew",
+		Status:       "Synced users",
+		IsStart:      false,
+		IsEnd:        true,
+		Object:       serialised,
+		CreatedAt:    expectedTimestamp,
+	}
+	require.Equal(t, expected, *latest)
+
+	nextRun, err := cursor.Get(ctx, "sync users-andrew-Started")
+	jtest.RequireNil(t, err)
+
+	expectedNextRun := time.Date(2023, time.May, 1, 0, 0, 0, 0, time.UTC)
+	require.Equal(t, expectedNextRun.Format(time.RFC3339), nextRun)
+
+	clock.SetTime(expectedNextRun)
+	clock.Step(time.Second)
+	expectedTimestamp = clock.Now()
+
+	time.Sleep(20 * time.Millisecond)
+
+	runID, err = store.LastRunID(ctx, "sync users", "andrew")
+	jtest.RequireNil(t, err)
+
+	key = workflow.MakeKey("sync users", "andrew", runID)
+	latest, err = store.LookupLatest(ctx, key)
+	jtest.RequireNil(t, err)
+
+	secondExpected := workflow.Record{
+		ID:           6,
+		RunID:        runID,
+		WorkflowName: "sync users",
+		ForeignID:    "andrew",
+		Status:       "Synced users",
+		IsStart:      false,
+		IsEnd:        true,
+		Object:       serialised,
+		CreatedAt:    expectedTimestamp,
+	}
+	require.Equal(t, secondExpected, *latest)
+}

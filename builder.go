@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+func NewBuilder[T any](name string, store Store, cursor Cursor) *Builder[T] {
+	return &Builder[T]{
+		workflow: &Workflow[T]{
+			Name:                    name,
+			clock:                   clock.RealClock{},
+			store:                   store,
+			cursor:                  cursor,
+			defaultPollingFrequency: 500 * time.Millisecond,
+			defaultErrBackOff:       500 * time.Millisecond,
+			processes:               make(map[string][]process[T]),
+			callback:                make(map[string][]callback[T]),
+			timeouts:                make(map[string]timeouts[T]),
+		},
+	}
+}
+
 type Builder[T any] struct {
 	workflow *Workflow[T]
 }

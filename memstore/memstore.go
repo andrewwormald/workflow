@@ -3,6 +3,7 @@ package memstore
 import (
 	"context"
 	"fmt"
+	"k8s.io/utils/clock"
 	"sync"
 	"time"
 
@@ -11,20 +12,38 @@ import (
 	"github.com/andrewwormald/workflow"
 )
 
-func New() *Store {
-	return &Store{
+func New(opts ...Option) *Store {
+	s := &Store{
 		idIncrement:        1,
 		timeoutIdIncrement: 1,
+		clock:              clock.RealClock{},
 		keyIndex:           make(map[string][]*workflow.Record),
 		workflowIndex:      make(map[string][]*workflow.Record),
+	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
+}
+
+type Option func(s *Store)
+
+func WithClock(c clock.Clock) Option {
+	return func(s *Store) {
+		s.clock = c
 	}
 }
 
 var _ workflow.Store = (*Store)(nil)
 
 type Store struct {
-	mu            sync.Mutex
-	idIncrement   int64
+	mu          sync.Mutex
+	idIncrement int64
+
+	clock clock.Clock
+
 	keyIndex      map[string][]*workflow.Record
 	workflowIndex map[string][]*workflow.Record
 
@@ -46,7 +65,7 @@ func (s *Store) Store(ctx context.Context, key workflow.Key, status string, obje
 		Object:       object,
 		IsStart:      isStart,
 		IsEnd:        isEnd,
-		CreatedAt:    time.Now(),
+		CreatedAt:    s.clock.Now(),
 	}
 
 	uk := uniqueKey(key.WorkflowName, key.ForeignID, key.RunID)
@@ -121,7 +140,7 @@ func (s *Store) CreateTimeout(ctx context.Context, key workflow.Key, status stri
 		Status:       status,
 		RunID:        key.RunID,
 		ExpireAt:     expireAt,
-		CreatedAt:    time.Now(),
+		CreatedAt:    s.clock.Now(),
 	})
 	s.timeoutIdIncrement++
 

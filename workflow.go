@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"context"
+	"fmt"
+	"github.com/robfig/cron"
 	"io"
 	"sync"
 	"time"
@@ -12,22 +14,6 @@ import (
 	"github.com/luno/jettison/log"
 	"k8s.io/utils/clock"
 )
-
-func NewBuilder[T any](name string, store Store, cursor Cursor) *Builder[T] {
-	return &Builder[T]{
-		workflow: &Workflow[T]{
-			Name:                    name,
-			clock:                   clock.RealClock{},
-			store:                   store,
-			cursor:                  cursor,
-			defaultPollingFrequency: 500 * time.Millisecond,
-			defaultErrBackOff:       500 * time.Millisecond,
-			processes:               make(map[string][]process[T]),
-			callback:                make(map[string][]callback[T]),
-			timeouts:                make(map[string]timeouts[T]),
-		},
-	}
-}
 
 type Workflow[T any] struct {
 	Name string
@@ -101,6 +87,58 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 	// transition between statuses / states.
 	isEnd := false
 	return key.RunID, w.store.Store(ctx, key, startingStatus, object, isStart, isEnd)
+}
+
+func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, startingStatus string, spec string, opts ...TriggerOption[T]) error {
+	key := fmt.Sprintf("%v-%v-%v", w.Name, foreignID, startingStatus)
+	schedule, err := cron.Parse(spec)
+	if err != nil {
+		return err
+	}
+
+	for {
+		value, err := w.cursor.Get(ctx, key)
+		if errors.Is(err, ErrCursorNotFound) {
+			// NoReturnErr: Default to empty value if no cursor has been set
+		} else if err != nil {
+			return err
+		}
+
+		if value != "" {
+			nextRun, err := time.Parse(time.RFC3339, value)
+			if err != nil {
+				return err
+			}
+
+			err = waitUntil(ctx, w.clock, nextRun)
+			if err != nil {
+				return err
+			}
+		}
+
+		_, err = w.Trigger(ctx, foreignID, startingStatus)
+		if err != nil {
+			return err
+		}
+
+		next := schedule.Next(w.clock.Now())
+		err = w.cursor.Set(ctx, key, next.Format(time.RFC3339))
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func waitUntil(ctx context.Context, clock clock.Clock, until time.Time) error {
+	timeDiffAsDuration := until.Sub(clock.Now())
+
+	t := clock.NewTimer(timeDiffAsDuration)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C():
+		return nil
+	}
 }
 
 type triggerOpts[T any] struct {
@@ -177,8 +215,6 @@ func (w *Workflow[T]) Run(ctx context.Context) {
 		}
 	})
 }
-
-type Transformer[Event any] func(r *Record) (*Event, error)
 
 func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p process[T], shard, totalShards int64) {
 	for {
