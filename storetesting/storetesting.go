@@ -17,6 +17,7 @@ func TestStore(t *testing.T, factory func() workflow.Store) {
 		testBatch,
 		testCancelTimeout,
 		testLastRunID,
+		testLastRunIDErrRunIDNotFound,
 		testLastRecordForWorkflow,
 		testWorkflowBatch,
 		testCompleteTimeout,
@@ -270,6 +271,16 @@ func testLastRunID(t *testing.T, store workflow.Store) {
 
 	actualRunID, err := store.LastRunID(ctx, "example_workflow_name", "example_foreign_id")
 	jtest.RequireNil(t, err)
+
+	require.Equal(t, expectedRunID, actualRunID)
+}
+
+func testLastRunIDErrRunIDNotFound(t *testing.T, store workflow.Store) {
+	ctx := context.Background()
+	expectedRunID := ""
+
+	actualRunID, err := store.LastRunID(ctx, "example_workflow_name", "example_foreign_id")
+	jtest.Require(t, workflow.ErrRunIDNotFound, err)
 
 	require.Equal(t, expectedRunID, actualRunID)
 }

@@ -69,7 +69,9 @@ func (s *SQLStore) Find(ctx context.Context, key workflow.Key, status string) (*
 
 func (s *SQLStore) LastRunID(ctx context.Context, workflowName string, foreignID string) (string, error) {
 	r, err := s.lookupWhere(ctx, s.reader, "workflow_name=? and foreign_id=? order by id desc limit 1", workflowName, foreignID)
-	if err != nil {
+	if errors.Is(err, workflow.ErrRecordNotFound) {
+		return "", errors.Wrap(workflow.ErrRunIDNotFound, "")
+	} else if err != nil {
 		return "", err
 	}
 
