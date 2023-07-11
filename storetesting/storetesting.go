@@ -34,7 +34,6 @@ func testStore_LookupLatest_Find(t *testing.T, store workflow.Store) {
 	workflowName := "my_workflow"
 	foreignID := "Andrew Wormald"
 	runID := "LSDKLJFN-SKDFJB-WERLTBE"
-	status := "Completed"
 
 	type example struct {
 		name string
@@ -45,14 +44,17 @@ func testStore_LookupLatest_Find(t *testing.T, store workflow.Store) {
 	jtest.RequireNil(t, err)
 
 	key := workflow.MakeKey(workflowName, foreignID, runID)
-	err = store.Store(ctx, key, status, b, true, false)
+	err = store.Store(ctx, key, "Started", b, false, false)
+	jtest.RequireNil(t, err)
+
+	err = store.Store(ctx, key, "Completed", b, true, false)
 	jtest.RequireNil(t, err)
 
 	expected := workflow.Record{
-		ID:           1,
+		ID:           2,
 		WorkflowName: workflowName,
 		ForeignID:    foreignID,
-		Status:       status,
+		Status:       "Completed",
 		Object:       b,
 		CreatedAt:    time.Now(),
 		IsStart:      true,
@@ -63,7 +65,7 @@ func testStore_LookupLatest_Find(t *testing.T, store workflow.Store) {
 	jtest.RequireNil(t, err)
 	recordIsEqual(t, expected, *latest)
 
-	found, err := store.Find(ctx, key, status)
+	found, err := store.Find(ctx, key, "Completed")
 	jtest.RequireNil(t, err)
 	recordIsEqual(t, expected, *found)
 }

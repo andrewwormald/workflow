@@ -46,7 +46,7 @@ func (s *SQLStore) Batch(ctx context.Context, workflowName string, status string
 }
 
 func (s *SQLStore) LookupLatest(ctx context.Context, key workflow.Key) (*workflow.Record, error) {
-	ls, err := s.listWhere(ctx, s.reader, "workflow_name=? and foreign_id=? and run_id=?", key.WorkflowName, key.ForeignID, key.RunID)
+	ls, err := s.listWhere(ctx, s.reader, "workflow_name=? and foreign_id=? and run_id=? order by id desc limit 1", key.WorkflowName, key.ForeignID, key.RunID)
 	if err != nil {
 		return nil, err
 	}
