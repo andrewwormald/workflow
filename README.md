@@ -80,7 +80,7 @@ if err != nil {
 ```go
 yinYang, err := workflow.Await(ctx, foreignID, runID, "End")
 if err != nil {
-panic(err)
+    panic(err)
 }
 ```
 
