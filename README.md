@@ -90,19 +90,19 @@ If you were to switch out an automated step for a callback, where the workflow p
 ##### Configuring the callback
 ```go
 builder.AddCallback("Middle", func(ctx context.Context, key workflow.Key, t *YinYang, r io.Reader) (bool, error) {
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return false, err
-	}
-		
-	var e External
-	err = json.Unmarshal(b, &e)
-	if err != nil {
-		return false, err
-	}
+    b, err := io.ReadAll(r)
+    if err != nil {
+        return false, err
+    }
+	
+    var e External
+    err = json.Unmarshal(b, &e)
+    if err != nil {
+        return false, err
+    }
 
-	t.Yang = e.Thing == "Some"
-	return true, nil
+    t.Yang = e.Thing == "Some"
+    return true, nil
 }, "End")
 ```
 ##### Calling the callback
