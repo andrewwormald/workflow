@@ -231,6 +231,7 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 
 		select {
 		case <-ctx.Done():
+			return
 		case <-time.After(time.Minute): // Incorporate a 1 - minute backoff
 		}
 	}
@@ -245,6 +246,7 @@ func timeoutRunner[T any](ctx context.Context, w *Workflow[T], currentStatus str
 
 		select {
 		case <-ctx.Done():
+			return
 		case <-time.After(timeouts.ErrBackOff): // Incorporate a 1 - minute backoff
 		}
 	}
@@ -281,6 +283,7 @@ func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status stri
 
 		select {
 		case <-ctx.Done():
+			return
 		case <-time.After(timeouts.ErrBackOff):
 		}
 	}
