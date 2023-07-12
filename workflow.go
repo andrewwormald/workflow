@@ -218,9 +218,9 @@ func (w *Workflow[T]) Run(ctx context.Context) {
 
 func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p process[T], shard, totalShards int64) {
 	log.Info(ctx, "launched runner", j.MKV{
-		"workflow_name":      w.Name,
-		"current_status":     currentStatus,
-		"destination_status": p.DestinationStatus,
+		"workflow_name": w.Name,
+		"from":          currentStatus,
+		"to":            p.DestinationStatus,
 	})
 
 	for {
@@ -245,8 +245,8 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 
 func timeoutRunner[T any](ctx context.Context, w *Workflow[T], currentStatus string, timeouts timeouts[T]) {
 	log.Info(ctx, "launched timeout runner", j.MKV{
-		"workflow_name":  w.Name,
-		"current_status": currentStatus,
+		"workflow_name": w.Name,
+		"for":           currentStatus,
 	})
 
 	for {
@@ -265,8 +265,8 @@ func timeoutRunner[T any](ctx context.Context, w *Workflow[T], currentStatus str
 
 func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) {
 	log.Info(ctx, "launched timeout auto inserter runner", j.MKV{
-		"workflow_name":  w.Name,
-		"current_status": status,
+		"workflow_name": w.Name,
+		"for":           status,
 	})
 
 	for {
