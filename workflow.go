@@ -217,6 +217,12 @@ func (w *Workflow[T]) Run(ctx context.Context) {
 }
 
 func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p process[T], shard, totalShards int64) {
+	log.Info(ctx, "launched runner", j.MKV{
+		"workflow_name":      w.Name,
+		"current_status":     currentStatus,
+		"destination_status": p.DestinationStatus,
+	})
+
 	for {
 		err := streamAndConsume(ctx, w, currentStatus, p, shard, totalShards)
 		if errors.Is(err, ErrStreamingClosed) {
@@ -238,6 +244,11 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 }
 
 func timeoutRunner[T any](ctx context.Context, w *Workflow[T], currentStatus string, timeouts timeouts[T]) {
+	log.Info(ctx, "launched timeout runner", j.MKV{
+		"workflow_name":  w.Name,
+		"current_status": currentStatus,
+	})
+
 	for {
 		err := pollTimeouts(ctx, w, currentStatus, timeouts)
 		if err != nil {
@@ -253,6 +264,11 @@ func timeoutRunner[T any](ctx context.Context, w *Workflow[T], currentStatus str
 }
 
 func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) {
+	log.Info(ctx, "launched timeout auto inserter runner", j.MKV{
+		"workflow_name":  w.Name,
+		"current_status": status,
+	})
+
 	for {
 		err := streamAndConsume(ctx, w, status, process[T]{
 			PollingFrequency: timeouts.PollingFrequency,
