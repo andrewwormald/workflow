@@ -130,7 +130,7 @@ if err != nil {
 
 ### Timeouts: Scheduling for a future date?
 If you were to switch out an automated step for a timeout, a scheduled process, then this is what it would look like:
-##### Configuring the callback
+##### Configuring the timeout
 ```go
 builder.AddTimeout(
     "Middle",
