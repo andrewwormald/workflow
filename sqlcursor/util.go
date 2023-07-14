@@ -54,7 +54,7 @@ func (s *SQLCursor) lookupWhere(ctx context.Context, dbc *sql.DB, where string, 
 func (s *SQLCursor) listWhere(ctx context.Context, dbc *sql.DB, where string, args ...any) ([]CursorEntry, error) {
 	rows, err := dbc.QueryContext(ctx, s.selectPrefix+where, args...)
 	if err != nil {
-		return nil, errors.Wrap(err, "list")
+		return nil, errors.Wrap(err, "list where "+where)
 	}
 	defer rows.Close()
 

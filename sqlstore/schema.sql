@@ -5,7 +5,7 @@ create table workflow_records (
     foreign_id             varchar(255) not null,
     run_id                 varchar(255) not null,
     status                 varchar(255) not null,
-    object                 blob not null,
+    object                 longblob not null,
     is_start               bool not null,
     is_end                 bool not null,
     created_at             datetime(3) not null,
