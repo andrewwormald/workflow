@@ -314,9 +314,6 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	ctx := context.Background()
 	wf.Run(ctx)
 
-	// Grab the time from the clock for expectation as to the time we expect the entry to have
-	expectedTimestamp := clock.Now()
-
 	go func() {
 		err := wf.ScheduleTrigger(ctx, "andrew", "Started", "@monthly")
 		jtest.RequireNil(t, err)
@@ -325,6 +322,17 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	runID, err := store.LastRunID(ctx, "sync users", "andrew")
+	// Expect there to be no entries yet
+	jtest.Require(t, workflow.ErrRunIDNotFound, err)
+
+	// Grab the time from the clock for expectation as to the time we expect the entry to have
+	expectedTimestamp := time.Date(2023, time.May, 1, 0, 0, 0, 0, time.UTC)
+	clock.SetTime(expectedTimestamp)
+
+	// Allow scheduling to take place
+	time.Sleep(20 * time.Millisecond)
+
+	runID, err = store.LastRunID(ctx, "sync users", "andrew")
 	jtest.RequireNil(t, err)
 
 	key := workflow.MakeKey("sync users", "andrew", runID)
@@ -348,16 +356,10 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	}
 	require.Equal(t, expected, *latest)
 
-	nextRun, err := cursor.Get(ctx, "sync users-andrew-Started")
-	jtest.RequireNil(t, err)
+	expectedTimestamp = time.Date(2023, time.June, 1, 0, 0, 0, 0, time.UTC)
+	clock.SetTime(expectedTimestamp)
 
-	expectedNextRun := time.Date(2023, time.May, 1, 0, 0, 0, 0, time.UTC)
-	require.Equal(t, expectedNextRun.Format(time.RFC3339), nextRun)
-
-	clock.SetTime(expectedNextRun)
-	clock.Step(time.Second)
-	expectedTimestamp = clock.Now()
-
+	// Allow scheduling to take place
 	time.Sleep(20 * time.Millisecond)
 
 	runID, err = store.LastRunID(ctx, "sync users", "andrew")
