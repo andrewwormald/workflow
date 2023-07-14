@@ -178,7 +178,7 @@ func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, tim
 			}
 
 			for _, config := range timeouts.Transitions {
-				ok, err := config.TimeoutFunc(ctx, key, &t, time.Now())
+				ok, err := config.TimeoutFunc(ctx, key, &t, w.clock.Now())
 				if err != nil {
 					return err
 				}
