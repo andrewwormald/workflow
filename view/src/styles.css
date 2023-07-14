@@ -1,0 +1,13 @@
+.table-wrapper {
+    padding: 15px;
+    display: flex;
+    justify-content: center;
+}
+
+.is-complete {
+    background: forestgreen;
+}
+
+.is-pending {
+    background: orange;
+}
