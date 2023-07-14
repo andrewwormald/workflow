@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"github.com/robfig/cron"
 	"io"
 	"sync"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/log"
+	"github.com/robfig/cron"
 	"k8s.io/utils/clock"
 )
 
