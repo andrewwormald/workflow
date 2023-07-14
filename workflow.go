@@ -2,8 +2,6 @@ package workflow
 
 import (
 	"context"
-	"fmt"
-	"github.com/robfig/cron"
 	"io"
 	"sync"
 	"time"
@@ -12,6 +10,7 @@ import (
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/log"
+	"github.com/robfig/cron"
 	"k8s.io/utils/clock"
 )
 
@@ -90,41 +89,65 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 }
 
 func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, startingStatus string, spec string, opts ...TriggerOption[T]) error {
-	key := fmt.Sprintf("%v-%v-%v", w.Name, foreignID, startingStatus)
 	schedule, err := cron.Parse(spec)
 	if err != nil {
 		return err
 	}
 
 	for {
-		value, err := w.cursor.Get(ctx, key)
-		if errors.Is(err, ErrCursorNotFound) {
-			// NoReturnErr: Default to empty value if no cursor has been set
+		lastRunID, err := w.store.LastRunID(ctx, w.Name, foreignID)
+		if errors.Is(err, ErrRunIDNotFound) {
+			// NoReturnErr: Rather use zero value for lastRunID and use current clock for first run.
 		} else if err != nil {
-			return err
+			log.Error(ctx, errors.Wrap(err, "schedule trigger error - lookup latest record", j.MKV{
+				"workflow_name":   w.Name,
+				"foreignID":       foreignID,
+				"starting_status": startingStatus,
+			}))
+			continue
 		}
 
-		if value != "" {
-			nextRun, err := time.Parse(time.RFC3339, value)
+		var lastRun time.Time
+		if lastRunID != "" {
+			storeKey := MakeKey(w.Name, foreignID, lastRunID)
+			latestEntry, err := w.store.LookupLatest(ctx, storeKey)
 			if err != nil {
-				return err
+				if err != nil {
+					log.Error(ctx, errors.Wrap(err, "schedule trigger error - lookup latest record", j.MKV{
+						"workflow_name":   w.Name,
+						"foreignID":       foreignID,
+						"starting_status": startingStatus,
+					}))
+					continue
+				}
 			}
 
-			err = waitUntil(ctx, w.clock, nextRun)
-			if err != nil {
-				return err
-			}
+			// Use the last attempt as the last run
+			lastRun = latestEntry.CreatedAt
 		}
 
-		_, err = w.Trigger(ctx, foreignID, startingStatus)
+		// If there is no previous executions of this workflow then schedule the very next from now.
+		if lastRun.IsZero() {
+			lastRun = w.clock.Now()
+		}
+
+		nextRun := schedule.Next(lastRun)
+		err = waitUntil(ctx, w.clock, nextRun)
 		if err != nil {
 			return err
 		}
 
-		next := schedule.Next(w.clock.Now())
-		err = w.cursor.Set(ctx, key, next.Format(time.RFC3339))
-		if err != nil {
-			return err
+		_, err = w.Trigger(ctx, foreignID, startingStatus, opts...)
+		if errors.Is(err, ErrWorkflowInProgress) {
+			// NoReturnErr: Fallthrough to schedule next workflow as there is already one in progress. If this
+			// happens it is likely that we scheduled a workflow and were unable to schedule the next.
+		} else if err != nil {
+			log.Error(ctx, errors.Wrap(err, "schedule trigger error - triggering workflow", j.MKV{
+				"workflow_name":   w.Name,
+				"foreignID":       foreignID,
+				"starting_status": startingStatus,
+			}))
+			continue
 		}
 	}
 }
