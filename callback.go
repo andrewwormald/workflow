@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-func processCallback[T any](ctx context.Context, w *Workflow[T], destinationStatus string, fn CallbackFunc[T], foreignID string, payload io.Reader) error {
+func processCallback[T any](ctx context.Context, w *Workflow[T], currentStatus, destinationStatus string, fn CallbackFunc[T], foreignID string, payload io.Reader) error {
 	runID, err := w.store.LastRunID(ctx, w.Name, foreignID)
 	if err != nil {
 		return err
@@ -16,6 +16,11 @@ func processCallback[T any](ctx context.Context, w *Workflow[T], destinationStat
 	latest, err := w.store.LookupLatest(ctx, key)
 	if err != nil {
 		return err
+	}
+
+	if latest.Status != currentStatus {
+		// Latest record shows that the current status is in a different state than expected so skip.
+		return nil
 	}
 
 	var t T

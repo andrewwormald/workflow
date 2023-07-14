@@ -206,7 +206,7 @@ func WithPollingFrequency(d time.Duration) AwaitOption {
 
 func (w *Workflow[T]) Callback(ctx context.Context, foreignID string, status string, payload io.Reader) error {
 	for _, s := range w.callback[status] {
-		err := processCallback(ctx, w, s.DestinationStatus, s.CallbackFunc, foreignID, payload)
+		err := processCallback(ctx, w, status, s.DestinationStatus, s.CallbackFunc, foreignID, payload)
 		if err != nil {
 			return err
 		}
