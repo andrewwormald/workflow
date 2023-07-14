@@ -57,8 +57,11 @@ type ExternalOTP struct {
 }
 
 func TestWorkflow(t *testing.T) {
-	// This introduces a validation element to the producing of events.
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
+
 	store := memstore.New()
 	cursor := memcursor.New()
 
@@ -86,16 +89,16 @@ func TestWorkflow(t *testing.T) {
 	jtest.RequireNil(t, err)
 
 	// Once in the correct state, trigger third party callbacks
-	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusEmailConfirmationSent, ExternalEmailVerified{
+	workflow.TriggerCallbackOn(t, wf, fid, StatusEmailConfirmationSent, ExternalEmailVerified{
 		IsVerified: true,
 	})
 
-	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusEmailVerified, ExternalCellPhoneSubmitted{
+	workflow.TriggerCallbackOn(t, wf, fid, StatusEmailVerified, ExternalCellPhoneSubmitted{
 		DialingCode: "+44",
 		Number:      "7467623292",
 	})
 
-	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusOTPSent, ExternalOTP{
+	workflow.TriggerCallbackOn(t, wf, fid, StatusOTPSent, ExternalOTP{
 		OTPCode: expectedOTP,
 	})
 
@@ -104,7 +107,7 @@ func TestWorkflow(t *testing.T) {
 	// Advance time forward by one hour to trigger the timeout
 	clock.Step(time.Hour)
 
-	_, err = wf.Await(ctx, fid, runID, StatusCompleted)
+	_, err = wf.Await(ctx, fid, StatusCompleted)
 	jtest.RequireNil(t, err)
 
 	key := workflow.MakeKey("user sign up", fid, runID)
@@ -126,7 +129,11 @@ func TestWorkflow(t *testing.T) {
 }
 
 func TestPollingFrequency(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
+
 	store := memstore.New()
 	cursor := memcursor.New()
 
@@ -146,16 +153,16 @@ func TestPollingFrequency(t *testing.T) {
 
 	start := time.Now()
 
-	runID, err := wf.Trigger(ctx, "example", StatusInitiated)
+	_, err := wf.Trigger(ctx, "example", StatusInitiated)
 	jtest.RequireNil(t, err)
 
-	_, err = wf.Await(ctx, "example", runID, StatusProfileCreated, workflow.WithPollingFrequency(300*time.Millisecond))
+	_, err = wf.Await(ctx, "example", StatusProfileCreated, workflow.WithPollingFrequency(300*time.Millisecond))
 	jtest.RequireNil(t, err)
 
 	// Advance time forward by one hour to trigger the timeout
 	clock.Step(time.Hour)
 
-	_, err = wf.Await(ctx, "example", runID, StatusCompleted)
+	_, err = wf.Await(ctx, "example", StatusCompleted)
 	jtest.RequireNil(t, err)
 
 	end := time.Now()
@@ -311,7 +318,10 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	}, "Synced users", workflow.WithStepPollingFrequency(time.Millisecond))
 
 	wf := b.Build(workflow.WithClock(clock))
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
 	wf.Run(ctx)
 
 	go func() {

@@ -177,7 +177,7 @@ func WithInitialValue[T any](t *T) TriggerOption[T] {
 	}
 }
 
-func (w *Workflow[T]) Await(ctx context.Context, foreignID string, runID string, status string, opts ...AwaitOption) (*T, error) {
+func (w *Workflow[T]) Await(ctx context.Context, foreignID string, status string, opts ...AwaitOption) (*T, error) {
 	var opt awaitOpts
 	for _, option := range opts {
 		option(&opt)
@@ -188,7 +188,12 @@ func (w *Workflow[T]) Await(ctx context.Context, foreignID string, runID string,
 		pollFrequency = opt.pollFrequency
 	}
 
-	key := MakeKey(w.Name, foreignID, runID)
+	lastRunID, err := w.store.LastRunID(ctx, w.Name, foreignID)
+	if err != nil {
+		return nil, err
+	}
+
+	key := MakeKey(w.Name, foreignID, lastRunID)
 	return awaitWorkflowStatusByForeignID[T](ctx, w, key, status, pollFrequency)
 }
 
