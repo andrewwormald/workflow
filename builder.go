@@ -206,12 +206,6 @@ func WithClock(c clock.Clock) BuildOption {
 	}
 }
 
-func WithStore(s Store) BuildOption {
-	return func(bo *buildOptions) {
-		bo.store = s
-	}
-}
-
 func (b *Builder[T]) buildGraph() map[string][]string {
 	graph := make(map[string][]string)
 	dedupe := make(map[string]bool)
