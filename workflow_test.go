@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/andrewwormald/workflow/memcursor"
-	"github.com/andrewwormald/workflow/memrolescheduler"
 	"io"
 	"strconv"
 	"testing"
@@ -17,6 +15,8 @@ import (
 	clock_testing "k8s.io/utils/clock/testing"
 
 	"github.com/andrewwormald/workflow"
+	"github.com/andrewwormald/workflow/memcursor"
+	"github.com/andrewwormald/workflow/memrolescheduler"
 	"github.com/andrewwormald/workflow/memstore"
 )
 
