@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/andrewwormald/workflow/memcursor"
+	"github.com/andrewwormald/workflow/memrolescheduler"
 	"io"
 	"strconv"
 	"testing"
@@ -15,7 +17,6 @@ import (
 	clock_testing "k8s.io/utils/clock/testing"
 
 	"github.com/andrewwormald/workflow"
-	"github.com/andrewwormald/workflow/memcursor"
 	"github.com/andrewwormald/workflow/memstore"
 )
 
@@ -63,9 +64,8 @@ func TestWorkflow(t *testing.T) {
 	})
 
 	store := memstore.New()
-	cursor := memcursor.New()
 
-	b := workflow.NewBuilder[MyType]("user sign up", store, cursor)
+	b := workflow.NewBuilder[MyType]("user sign up")
 	b.AddStep(StatusInitiated, createProfile, StatusProfileCreated)
 	b.AddStep(StatusProfileCreated, sendEmailConfirmation, StatusEmailConfirmationSent, workflow.WithParallelCount(5))
 	b.AddCallback(StatusEmailConfirmationSent, emailVerifiedCallback, StatusEmailVerified)
@@ -75,7 +75,12 @@ func TestWorkflow(t *testing.T) {
 	b.AddTimeoutWithDuration(StatusOTPVerified, waitForAccountCoolDown, time.Hour, StatusCompleted)
 
 	clock := clock_testing.NewFakeClock(time.Now())
-	wf := b.Build(workflow.WithClock(clock))
+	wf := b.Build(
+		store,
+		memcursor.New(),
+		memrolescheduler.New(),
+		workflow.WithClock(clock),
+	)
 
 	wf.Run(ctx)
 
@@ -134,10 +139,7 @@ func TestPollingFrequency(t *testing.T) {
 		cancel()
 	})
 
-	store := memstore.New()
-	cursor := memcursor.New()
-
-	b := workflow.NewBuilder[MyType]("user sign up", store, cursor)
+	b := workflow.NewBuilder[MyType]("user sign up")
 
 	b.AddStep(StatusInitiated, func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
 		return true, nil
@@ -148,7 +150,12 @@ func TestPollingFrequency(t *testing.T) {
 	}, time.Hour, StatusCompleted, workflow.WithTimeoutPollingFrequency(100*time.Millisecond))
 
 	clock := clock_testing.NewFakeClock(time.Now())
-	wf := b.Build(workflow.WithClock(clock))
+	wf := b.Build(
+		memstore.New(memstore.WithClock(clock)),
+		memcursor.New(),
+		memrolescheduler.New(),
+		workflow.WithClock(clock),
+	)
 	wf.Run(ctx)
 
 	start := time.Now()
@@ -306,8 +313,7 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	now := time.Date(2023, time.April, 9, 8, 30, 0, 0, time.UTC)
 	clock := clock_testing.NewFakeClock(now)
 	store := memstore.New(memstore.WithClock(clock))
-	cursor := memcursor.New()
-	b := workflow.NewBuilder[MyType]("sync users", store, cursor)
+	b := workflow.NewBuilder[MyType]("sync users")
 
 	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
 		return true, nil
@@ -317,7 +323,12 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 		return true, nil
 	}, "Synced users", workflow.WithStepPollingFrequency(time.Millisecond))
 
-	wf := b.Build(workflow.WithClock(clock))
+	wf := b.Build(
+		store,
+		memcursor.New(),
+		memrolescheduler.New(),
+		workflow.WithClock(clock),
+	)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
 		cancel()

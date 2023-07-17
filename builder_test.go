@@ -11,10 +11,10 @@ import (
 )
 
 func TestDetermineEndPoints(t *testing.T) {
-	b := NewBuilder[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points")
 	b.AddStep("Start", nil, "Middle")
 	b.AddStep("Middle", nil, "End")
-	wf := b.Build()
+	wf := b.Build(nil, nil, nil)
 
 	expected := map[string]bool{
 		"End": true,
@@ -24,33 +24,33 @@ func TestDetermineEndPoints(t *testing.T) {
 }
 
 func TestWithStepErrBackOff(t *testing.T) {
-	b := NewBuilder[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points")
 	b.AddStep("Start", nil, "Middle", WithStepErrBackOff(time.Minute))
-	wf := b.Build()
+	wf := b.Build(nil, nil, nil)
 
 	require.Equal(t, time.Minute, wf.processes["Start"][0].ErrBackOff)
 }
 
-func TestWithStepPollingFrequency(t *testing.T) {
-	b := NewBuilder[string]("determine starting points", nil, nil)
+func ΩTestWithStepPollingFrequency(t *testing.T) {
+	b := NewBuilder[string]("determine starting points")
 	b.AddStep("Start", nil, "Middle", WithStepPollingFrequency(time.Minute))
-	wf := b.Build()
+	wf := b.Build(nil, nil, nil)
 
 	require.Equal(t, time.Minute, wf.processes["Start"][0].PollingFrequency)
 }
 
 func TestStepDestinationStatus(t *testing.T) {
-	b := NewBuilder[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points")
 	b.AddStep("Start", nil, "Middle")
-	wf := b.Build()
+	wf := b.Build(nil, nil, nil)
 
 	require.Equal(t, "Middle", wf.processes["Start"][0].DestinationStatus)
 }
 
 func TestWithParallelCount(t *testing.T) {
-	b := NewBuilder[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points")
 	b.AddStep("Start", nil, "Middle", WithParallelCount(100))
-	wf := b.Build()
+	wf := b.Build(nil, nil, nil)
 
 	require.Equal(t, int64(100), wf.processes["Start"][0].ParallelCount)
 }
@@ -58,8 +58,8 @@ func TestWithParallelCount(t *testing.T) {
 func TestWithClock(t *testing.T) {
 	now := time.Now()
 	clock := clock_testing.NewFakeClock(now)
-	b := NewBuilder[string]("determine starting points", nil, nil)
-	wf := b.Build(WithClock(clock))
+	b := NewBuilder[string]("determine starting points")
+	wf := b.Build(nil, nil, nil, WithClock(clock))
 
 	clock.Step(time.Hour)
 
@@ -71,9 +71,9 @@ func TestAddingCallbacks(t *testing.T) {
 		return true, nil
 	}
 
-	b := NewBuilder[string]("determine starting points", nil, nil)
+	b := NewBuilder[string]("determine starting points")
 	b.AddCallback("Start", exampleFn, "End")
-	wf := b.Build()
+	wf := b.Build(nil, nil, nil)
 
 	require.Equal(t, "End", wf.callback["Start"][0].DestinationStatus)
 	require.NotNil(t, wf.callback["Start"][0].CallbackFunc)
