@@ -192,9 +192,6 @@ func (b *Builder[T]) Build(store Store, cursor Cursor, roleScheduler RoleSchedul
 
 type buildOptions struct {
 	clock     clock.Clock
-	store     Store
-	cursor    Cursor
-	scheduler RoleScheduler
 	debugMode bool
 }
 
@@ -203,6 +200,12 @@ type BuildOption func(w *buildOptions)
 func WithClock(c clock.Clock) BuildOption {
 	return func(bo *buildOptions) {
 		bo.clock = c
+	}
+}
+
+func WithDebugMode() BuildOption {
+	return func(bo *buildOptions) {
+		bo.debugMode = true
 	}
 }
 
