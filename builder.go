@@ -6,13 +6,11 @@ import (
 	"time"
 )
 
-func NewBuilder[T any](name string, store Store, cursor Cursor) *Builder[T] {
+func NewBuilder[T any](name string) *Builder[T] {
 	return &Builder[T]{
 		workflow: &Workflow[T]{
 			Name:                    name,
 			clock:                   clock.RealClock{},
-			store:                   store,
-			cursor:                  cursor,
 			defaultPollingFrequency: 500 * time.Millisecond,
 			defaultErrBackOff:       500 * time.Millisecond,
 			processes:               make(map[string][]process[T]),
@@ -168,7 +166,11 @@ func (b *Builder[T]) AddTimeoutWithDuration(from string, tf TimeoutFunc[T], dura
 	b.workflow.timeouts[from] = timeouts
 }
 
-func (b *Builder[T]) Build(opts ...BuildOption) *Workflow[T] {
+func (b *Builder[T]) Build(store Store, cursor Cursor, roleScheduler RoleScheduler, opts ...BuildOption) *Workflow[T] {
+	b.workflow.store = store
+	b.workflow.cursor = cursor
+	b.workflow.scheduler = roleScheduler
+
 	var bo buildOptions
 	for _, opt := range opts {
 		opt(&bo)
@@ -189,7 +191,8 @@ func (b *Builder[T]) Build(opts ...BuildOption) *Workflow[T] {
 }
 
 type buildOptions struct {
-	clock clock.Clock
+	clock     clock.Clock
+	debugMode bool
 }
 
 type BuildOption func(w *buildOptions)
@@ -197,6 +200,12 @@ type BuildOption func(w *buildOptions)
 func WithClock(c clock.Clock) BuildOption {
 	return func(bo *buildOptions) {
 		bo.clock = c
+	}
+}
+
+func WithDebugMode() BuildOption {
+	return func(bo *buildOptions) {
+		bo.debugMode = true
 	}
 }
 

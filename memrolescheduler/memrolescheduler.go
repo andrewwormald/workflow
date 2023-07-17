@@ -3,8 +3,6 @@ package memrolescheduler
 import (
 	"context"
 	"sync"
-
-	"github.com/andrewwormald/workflow"
 )
 
 type RoleScheduler struct {
@@ -38,7 +36,7 @@ func (r RoleScheduler) AwaitRoleContext(ctx context.Context, role string) (conte
 	return ctx2, cancel, nil
 }
 
-func New() workflow.RoleScheduler {
+func New() *RoleScheduler {
 	return &RoleScheduler{
 		roles: make(map[string]*sync.Mutex),
 	}

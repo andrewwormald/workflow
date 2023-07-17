@@ -2,7 +2,9 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,8 +25,9 @@ type Workflow[T any] struct {
 
 	once sync.Once
 
-	store  Store
-	cursor Cursor
+	store     Store
+	cursor    Cursor
+	scheduler RoleScheduler
 
 	processes map[string][]process[T]
 	callback  map[string][]callback[T]
@@ -32,6 +35,8 @@ type Workflow[T any] struct {
 
 	graph     map[string][]string
 	endPoints map[string]bool
+
+	debugMode bool
 }
 
 func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingStatus string, opts ...TriggerOption[T]) (runID string, err error) {
@@ -94,7 +99,14 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 		return err
 	}
 
+	role := strings.Join([]string{w.Name, startingStatus, foreignID, "scheduler", spec}, "-")
+
 	for {
+		ctx, cancel, err := w.scheduler.AwaitRoleContext(ctx, role)
+		if err != nil {
+			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
+		}
+
 		lastRunID, err := w.store.LastRunID(ctx, w.Name, foreignID)
 		if errors.Is(err, ErrRunIDNotFound) {
 			// NoReturnErr: Rather use zero value for lastRunID and use current clock for first run.
@@ -104,6 +116,7 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 				"foreignID":       foreignID,
 				"starting_status": startingStatus,
 			}))
+			cancel()
 			continue
 		}
 
@@ -112,14 +125,13 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 			storeKey := MakeKey(w.Name, foreignID, lastRunID)
 			latestEntry, err := w.store.LookupLatest(ctx, storeKey)
 			if err != nil {
-				if err != nil {
-					log.Error(ctx, errors.Wrap(err, "schedule trigger error - lookup latest record", j.MKV{
-						"workflow_name":   w.Name,
-						"foreignID":       foreignID,
-						"starting_status": startingStatus,
-					}))
-					continue
-				}
+				log.Error(ctx, errors.Wrap(err, "schedule trigger error - lookup latest record", j.MKV{
+					"workflow_name":   w.Name,
+					"foreignID":       foreignID,
+					"starting_status": startingStatus,
+				}))
+				cancel()
+				continue
 			}
 
 			// Use the last attempt as the last run
@@ -134,7 +146,15 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 		nextRun := schedule.Next(lastRun)
 		err = waitUntil(ctx, w.clock, nextRun)
 		if err != nil {
-			return err
+			log.Error(ctx, errors.Wrap(err, "schedule trigger error - wait until", j.MKV{
+				"workflow_name": w.Name,
+				"now":           w.clock.Now(),
+				"spec":          spec,
+				"last_run":      lastRun,
+				"next_run":      nextRun,
+			}))
+			cancel()
+			continue
 		}
 
 		_, err = w.Trigger(ctx, foreignID, startingStatus, opts...)
@@ -147,8 +167,12 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 				"foreignID":       foreignID,
 				"starting_status": startingStatus,
 			}))
+			cancel()
 			continue
 		}
+
+		// Always cancel the context to release the role
+		cancel()
 	}
 }
 
@@ -230,7 +254,7 @@ func (w *Workflow[T]) Run(ctx context.Context) {
 					go runner(ctx, w, currentStatus, p, 1, 1)
 				} else {
 					// Run as sharded parallel consumers
-					for i := int64(0); i < p.ParallelCount; i++ {
+					for i := int64(1); i <= p.ParallelCount; i++ {
 						go runner(ctx, w, currentStatus, p, i, p.ParallelCount)
 					}
 				}
@@ -239,66 +263,132 @@ func (w *Workflow[T]) Run(ctx context.Context) {
 
 		for status, timeouts := range w.timeouts {
 			go timeoutRunner(ctx, w, status, timeouts)
-			go timeoutAutoInserter(ctx, w, status, timeouts)
+			go timeoutAutoInserterRunner(ctx, w, status, timeouts)
 		}
 	})
 }
 
 func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p process[T], shard, totalShards int64) {
-	log.Info(ctx, "launched runner", j.MKV{
-		"workflow_name": w.Name,
-		"from":          currentStatus,
-		"to":            p.DestinationStatus,
-	})
+	if w.debugMode {
+		log.Info(ctx, "launched runner", j.MKV{
+			"workflow_name": w.Name,
+			"from":          currentStatus,
+			"to":            p.DestinationStatus,
+		})
+	}
+
+	role := makeRole(
+		w.Name,
+		currentStatus,
+		p.DestinationStatus,
+		"runner",
+		fmt.Sprintf("%v", shard),
+		"of",
+		fmt.Sprintf("%v", totalShards),
+	)
 
 	for {
-		err := streamAndConsume(ctx, w, currentStatus, p, shard, totalShards)
+		ctx, cancel, err := w.scheduler.AwaitRoleContext(ctx, role)
+		if err != nil {
+			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
+		}
+
+		if ctx.Err() != nil {
+			// Gracefully exit when context has been cancelled
+			if w.debugMode {
+				log.Info(ctx, "shutting down process - runner", j.MKV{
+					"workflow_name":      w.Name,
+					"current_status":     currentStatus,
+					"destination_status": p.DestinationStatus,
+					"shard":              shard,
+					"total_shards":       totalShards,
+				})
+			}
+			return
+		}
+
+		err = streamAndConsume(ctx, w, currentStatus, p, shard, totalShards)
 		if errors.Is(err, ErrStreamingClosed) {
-			log.Info(ctx, "shutting down process - runner", j.MKV{
-				"workflow_name":      w.Name,
-				"current_status":     currentStatus,
-				"destination_status": p.DestinationStatus,
-			})
+			if w.debugMode {
+				log.Info(ctx, "shutting down process - runner", j.MKV{
+					"workflow_name":      w.Name,
+					"current_status":     currentStatus,
+					"destination_status": p.DestinationStatus,
+					"shard":              shard,
+					"total_shards":       totalShards,
+				})
+			}
 		} else if err != nil {
 			log.Error(ctx, errors.Wrap(err, "runner error"))
 		}
 
 		select {
 		case <-ctx.Done():
+			cancel()
+			if w.debugMode {
+				log.Info(ctx, "shutting down process - runner", j.MKV{
+					"workflow_name":      w.Name,
+					"current_status":     currentStatus,
+					"destination_status": p.DestinationStatus,
+					"shard":              shard,
+					"total_shards":       totalShards,
+				})
+			}
 			return
-		case <-time.After(time.Minute): // Incorporate a 1 - minute backoff
+		case <-time.After(p.ErrBackOff):
+			cancel()
 		}
 	}
 }
 
-func timeoutRunner[T any](ctx context.Context, w *Workflow[T], currentStatus string, timeouts timeouts[T]) {
-	log.Info(ctx, "launched timeout runner", j.MKV{
-		"workflow_name": w.Name,
-		"for":           currentStatus,
-	})
+func timeoutRunner[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) {
+	if w.debugMode {
+		log.Info(ctx, "launched timeout runner", j.MKV{
+			"workflow_name": w.Name,
+			"for":           status,
+		})
+	}
+
+	role := makeRole(w.Name, status, "timeout-runner")
 
 	for {
-		err := pollTimeouts(ctx, w, currentStatus, timeouts)
+		ctx, cancel, err := w.scheduler.AwaitRoleContext(ctx, role)
+		if err != nil {
+			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
+		}
+
+		err = pollTimeouts(ctx, w, status, timeouts)
 		if err != nil {
 			log.Error(ctx, errors.Wrap(err, "runner error"))
 		}
 
 		select {
 		case <-ctx.Done():
+			cancel()
 			return
-		case <-time.After(timeouts.ErrBackOff): // Incorporate a 1 - minute backoff
+		case <-time.After(timeouts.ErrBackOff):
+			cancel()
 		}
 	}
 }
 
-func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) {
-	log.Info(ctx, "launched timeout auto inserter runner", j.MKV{
-		"workflow_name": w.Name,
-		"for":           status,
-	})
+func timeoutAutoInserterRunner[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) {
+	if w.debugMode {
+		log.Info(ctx, "launched timeout auto inserter runner", j.MKV{
+			"workflow_name": w.Name,
+			"for":           status,
+		})
+	}
+
+	role := makeRole(w.Name, status, "timeout-auto-inserter-runner")
 
 	for {
-		err := streamAndConsume(ctx, w, status, process[T]{
+		ctx, cancel, err := w.scheduler.AwaitRoleContext(ctx, role)
+		if err != nil {
+			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
+		}
+
+		err = streamAndConsume(ctx, w, status, process[T]{
 			PollingFrequency: timeouts.PollingFrequency,
 			ErrBackOff:       timeouts.ErrBackOff,
 			Consumer: func(ctx context.Context, key Key, t *T) (bool, error) {
@@ -317,20 +407,31 @@ func timeoutAutoInserter[T any](ctx context.Context, w *Workflow[T], status stri
 			ParallelCount: 1,
 		}, 1, 1)
 		if errors.Is(err, ErrStreamingClosed) {
-			log.Info(ctx, "shutting down process - timeout auto inserter", j.MKV{
-				"workflow_name": w.Name,
-				"status":        status,
-			})
+			if w.debugMode {
+				log.Info(ctx, "shutting down process - timeout auto inserter runner", j.MKV{
+					"workflow_name": w.Name,
+					"status":        status,
+				})
+			}
 		} else if err != nil {
-			log.Error(ctx, errors.Wrap(err, "runner error"))
+			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
 		}
 
 		select {
 		case <-ctx.Done():
+			cancel()
 			return
 		case <-time.After(timeouts.ErrBackOff):
+			cancel()
 		}
 	}
+}
+
+func makeRole(inputs ...string) string {
+	joined := strings.Join(inputs, "-")
+	lowered := strings.ToLower(joined)
+	filled := strings.Replace(lowered, " ", "-", -1)
+	return filled
 }
 
 type process[T any] struct {

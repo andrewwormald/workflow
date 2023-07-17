@@ -37,7 +37,7 @@ func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string,
 
 		for _, r := range rs {
 			if totalShards > 1 {
-				if r.ID%totalShards != shard {
+				if r.ID%totalShards != shard-1 {
 					// Ensure this consumer is intended to process this event
 					continue
 				}
