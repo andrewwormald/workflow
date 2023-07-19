@@ -164,6 +164,9 @@ func (s *Store) CompleteTimeout(ctx context.Context, id int64) error {
 }
 
 func (s *Store) CancelTimeout(ctx context.Context, id int64) error {
+	s.tmu.Lock()
+	defer s.tmu.Unlock()
+
 	var index int
 	for i, timeout := range s.timeouts {
 		if timeout.ID != id {
@@ -181,6 +184,9 @@ func (s *Store) CancelTimeout(ctx context.Context, id int64) error {
 }
 
 func (s *Store) ListValidTimeouts(ctx context.Context, workflowName string, status string, now time.Time) ([]workflow.Timeout, error) {
+	s.tmu.Lock()
+	defer s.tmu.Unlock()
+
 	var valid []workflow.Timeout
 	for _, timeout := range s.timeouts {
 		if timeout.WorkflowName != workflowName {
