@@ -23,7 +23,8 @@ type Workflow[T any] struct {
 	defaultPollingFrequency time.Duration
 	defaultErrBackOff       time.Duration
 
-	once sync.Once
+	calledRun bool
+	once      sync.Once
 
 	store     Store
 	cursor    Cursor
@@ -40,6 +41,10 @@ type Workflow[T any] struct {
 }
 
 func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingStatus string, opts ...TriggerOption[T]) (runID string, err error) {
+	if !w.calledRun {
+		return "", errors.Wrap(ErrWorkflowNotRunning, "ensure Run() is called before attempting to trigger the workflow")
+	}
+
 	var o triggerOpts[T]
 	for _, fn := range opts {
 		fn(&o)
@@ -94,6 +99,10 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 }
 
 func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, startingStatus string, spec string, opts ...TriggerOption[T]) error {
+	if !w.calledRun {
+		return errors.Wrap(ErrWorkflowNotRunning, "ensure Run() is called before attempting to trigger the workflow")
+	}
+
 	schedule, err := cron.Parse(spec)
 	if err != nil {
 		return err
@@ -247,6 +256,8 @@ func (w *Workflow[T]) Callback(ctx context.Context, foreignID string, status str
 func (w *Workflow[T]) Run(ctx context.Context) {
 	// Ensure that the background consumers are only initialized once
 	w.once.Do(func() {
+		w.calledRun = true
+
 		for currentStatus, processes := range w.processes {
 			for _, p := range processes {
 				if p.ParallelCount < 2 {

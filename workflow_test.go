@@ -403,3 +403,31 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	}
 	require.Equal(t, secondExpected, *latest)
 }
+
+func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
+	b := workflow.NewBuilder[MyType]("sync users")
+
+	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, "Collected users", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	b.AddStep("Collected users", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, "Synced users", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	wf := b.Build(
+		memstore.New(),
+		memcursor.New(),
+		memrolescheduler.New(),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
+
+	_, err := wf.Trigger(ctx, "andrew", "Started")
+	jtest.Require(t, workflow.ErrWorkflowNotRunning, err)
+
+	err = wf.ScheduleTrigger(ctx, "andrew", "Started", "@monthly")
+	jtest.Require(t, workflow.ErrWorkflowNotRunning, err)
+}
