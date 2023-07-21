@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
@@ -46,4 +48,25 @@ func AwaitTimeoutInsert[T any](t *testing.T, w *Workflow[T], status string) {
 
 	_, err = w.Await(ctx, r.ForeignID, status, WithPollingFrequency(pf*2))
 	jtest.RequireNil(t, err)
+}
+
+func Require[T any](t *testing.T, w *Workflow[T], status string, expected T) {
+	if t == nil {
+		panic("Require can only be used for testing")
+	}
+
+	_, ok := w.validStatuses[status]
+	if !ok {
+		t.Error(fmt.Sprintf(`Status provided is not configured for workflow: "%v" (Workflow: %v)`, status, w.Name))
+		return
+	}
+
+	ctx := context.TODO()
+	r, err := w.store.LastRecordForWorkflow(ctx, w.Name)
+	jtest.RequireNil(t, err)
+
+	actual, err := w.Await(ctx, r.ForeignID, status)
+	jtest.RequireNil(t, err)
+
+	require.Equal(t, expected, *actual)
 }
