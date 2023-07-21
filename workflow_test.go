@@ -431,3 +431,43 @@ func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
 	err = wf.ScheduleTrigger(ctx, "andrew", "Started", "@monthly")
 	jtest.Require(t, workflow.ErrWorkflowNotRunning, err)
 }
+
+func TestWorkflow_TestingRequire(t *testing.T) {
+	b := workflow.NewBuilder[MyType]("sync users")
+
+	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		t.Email = "andrew@workflow.com"
+		return true, nil
+	}, "Updated email", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	b.AddStep("Updated email", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		t.Cellphone = "+44 349 8594"
+		return true, nil
+	}, "Updated Cellphone", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	wf := b.Build(
+		memstore.New(),
+		memcursor.New(),
+		memrolescheduler.New(),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
+
+	wf.Run(ctx)
+
+	_, err := wf.Trigger(ctx, "andrew", "Started")
+	jtest.RequireNil(t, err)
+
+	expected := MyType{
+		Email: "andrew@workflow.com",
+	}
+	workflow.Require(t, wf, "Synced users", expected)
+
+	expected = MyType{
+		Email:     "andrew@workflow.com",
+		Cellphone: "+44 349 8594",
+	}
+	workflow.Require(t, wf, "Updated Cellphone", expected)
+}

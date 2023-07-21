@@ -34,8 +34,9 @@ type Workflow[T any] struct {
 	callback  map[string][]callback[T]
 	timeouts  map[string]timeouts[T]
 
-	graph     map[string][]string
-	endPoints map[string]bool
+	graph         map[string][]string
+	endPoints     map[string]bool
+	validStatuses map[string]bool
 
 	debugMode bool
 }
@@ -43,6 +44,11 @@ type Workflow[T any] struct {
 func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingStatus string, opts ...TriggerOption[T]) (runID string, err error) {
 	if !w.calledRun {
 		return "", errors.Wrap(ErrWorkflowNotRunning, "ensure Run() is called before attempting to trigger the workflow")
+	}
+
+	_, ok := w.validStatuses[startingStatus]
+	if !ok {
+		return "", errors.Wrap(ErrStatusProvidedNotConfigured, fmt.Sprintf("ensure %v is configured for workflow: %v", startingStatus, w.Name))
 	}
 
 	var o triggerOpts[T]
@@ -101,6 +107,11 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, startingStatus string, spec string, opts ...TriggerOption[T]) error {
 	if !w.calledRun {
 		return errors.Wrap(ErrWorkflowNotRunning, "ensure Run() is called before attempting to trigger the workflow")
+	}
+
+	_, ok := w.validStatuses[startingStatus]
+	if !ok {
+		return errors.Wrap(ErrStatusProvidedNotConfigured, fmt.Sprintf("ensure %v is configured for workflow: %v", startingStatus, w.Name))
 	}
 
 	schedule, err := cron.Parse(spec)

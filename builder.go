@@ -16,6 +16,7 @@ func NewBuilder[T any](name string) *Builder[T] {
 			processes:               make(map[string][]process[T]),
 			callback:                make(map[string][]callback[T]),
 			timeouts:                make(map[string]timeouts[T]),
+			validStatuses:           make(map[string]bool),
 		},
 	}
 }
@@ -49,6 +50,8 @@ func (b *Builder[T]) AddStep(from string, c ConsumerFunc[T], to string, opts ...
 		p.ErrBackOff = so.errBackOff
 	}
 
+	b.workflow.validStatuses[from] = true
+	b.workflow.validStatuses[to] = true
 	b.workflow.processes[from] = append(b.workflow.processes[from], p)
 }
 
@@ -84,6 +87,8 @@ func (b *Builder[T]) AddCallback(from string, fn CallbackFunc[T], to string) {
 		CallbackFunc:      fn,
 	}
 
+	b.workflow.validStatuses[from] = true
+	b.workflow.validStatuses[to] = true
 	b.workflow.callback[from] = append(b.workflow.callback[from], c)
 }
 
@@ -134,6 +139,8 @@ func (b *Builder[T]) AddTimeout(from string, tf TimeoutFunc[T], time time.Time, 
 
 	timeouts.Transitions = append(timeouts.Transitions, t)
 
+	b.workflow.validStatuses[from] = true
+	b.workflow.validStatuses[to] = true
 	b.workflow.timeouts[from] = timeouts
 }
 
@@ -163,6 +170,8 @@ func (b *Builder[T]) AddTimeoutWithDuration(from string, tf TimeoutFunc[T], dura
 
 	timeouts.Transitions = append(timeouts.Transitions, t)
 
+	b.workflow.validStatuses[from] = true
+	b.workflow.validStatuses[to] = true
 	b.workflow.timeouts[from] = timeouts
 }
 
