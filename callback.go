@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"io"
+
+	"github.com/luno/jettison/errors"
+	"github.com/luno/jettison/j"
 )
 
 func processCallback[T any](ctx context.Context, w *Workflow[T], currentStatus, destinationStatus string, fn CallbackFunc[T], foreignID string, payload io.Reader) error {
 	runID, err := w.store.LastRunID(ctx, w.Name, foreignID)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to lookup last run id for callback", j.MKV{
+			"foreign_id": foreignID,
+		})
 	}
 
 	key := MakeKey(w.Name, foreignID, runID)
