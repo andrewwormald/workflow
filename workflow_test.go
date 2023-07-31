@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/luno/reflex"
 	"io"
 	"strconv"
 	"testing"
@@ -470,4 +471,69 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 		Cellphone: "+44 349 8594",
 	}
 	workflow.Require(t, wf, "Updated Cellphone", expected)
+}
+
+func TestWorkflow_Connection(t *testing.T) {
+	verifyWorkflowBuilder := workflow.NewBuilder[MyType]("verify user")
+	verifyWorkflowBuilder.AddStep("Initiated", nil, "Verified")
+	verifyWorkflow := verifyWorkflowBuilder.Build(memstore.New(), memcursor.New(), memrolescheduler.New())
+
+	b := workflow.NewBuilder[MyType]("sync users")
+
+	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		t.Email = "andrew@workflow.com"
+		return true, nil
+	}, "Updated email", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	b.AddStep("Updated email", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		t.Cellphone = "+44 349 8594"
+		return true, nil
+	}, "Updated Cellphone", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	// Proposed workflow connector
+	b.ConnectWorkflow("Updated Cellphone", workflow.Connector[MyType]{
+		Name: verifyWorkflow.Name,
+		ForeignID: func(r *workflow.Record) (string, error) {
+			return r.ForeignID, nil
+		},
+		Status: "Verified",
+		Consumer: func(ctx context.Context, key workflow.Key, mt *MyType) (bool, error) {
+			return true, nil
+		},
+	}, "Completed")
+
+	// Proposed reflex connector
+	b.ConnectReflexStream("Updated Cellphone", workflow.ReflexConnector[MyType]{
+		Stream: func(ctx context.Context, after string, opts ...reflex.StreamOption) (reflex.StreamClient, error) {
+			return nil, nil
+		},
+		ForeignID: func(e *reflex.Event) (string, error) {
+			return e.ForeignID, nil
+		},
+		EventType: exampleReflexEvent(1),
+		Consumer: func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+			return true, nil
+		},
+	},
+		"Verified",
+	)
+
+	wf := b.Build(
+		memstore.New(),
+		memcursor.New(),
+		memrolescheduler.New(),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
+
+	wf.Run(ctx)
+
+}
+
+type exampleReflexEvent int
+
+func (e exampleReflexEvent) ReflexType() int {
+	return int(e)
 }

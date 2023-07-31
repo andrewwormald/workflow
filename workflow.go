@@ -481,11 +481,29 @@ type timeout[T any] struct {
 	TimeoutFunc       TimeoutFunc[T]
 }
 
+func Calc[T any]() {
+
+}
+
+func reciever(fn func()) {
+
+}
+
+func test() {
+	reciever(Calc[string])
+}
+
+type Converter[T any] func(r Record) (*T, error)
+
+type ConnectorFilter func(fid string) bool
+
 type ConsumerFunc[T any] func(ctx context.Context, key Key, t *T) (bool, error)
 
 type CallbackFunc[T any] func(ctx context.Context, key Key, t *T, r io.Reader) (bool, error)
 
 type TimeoutFunc[T any] func(ctx context.Context, key Key, t *T, now time.Time) (bool, error)
+
+type ConnectorFunc func(ctx context.Context, workflowName string, c Converter[T any]) (bool, error)
 
 func Not[T any](c ConsumerFunc[T]) ConsumerFunc[T] {
 	return func(ctx context.Context, key Key, t *T) (bool, error) {

@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"context"
+	"github.com/luno/reflex"
 	"k8s.io/utils/clock"
 	"path"
 	"time"
@@ -173,6 +175,66 @@ func (b *Builder[T]) AddTimeoutWithDuration(from string, tf TimeoutFunc[T], dura
 	b.workflow.validStatuses[from] = true
 	b.workflow.validStatuses[to] = true
 	b.workflow.timeouts[from] = timeouts
+}
+
+type Connector[T any] struct {
+	Name      string
+	ForeignID func(r *Record) (string, error)
+	Status    string
+	Consumer  ConsumerFunc[T]
+}
+
+func (b *Builder[T]) ConnectWorkflow(from string, wc Connector[T], to string, opts ...AwaitOption) {
+	var opt awaitOpts
+	for _, option := range opts {
+		option(&opt)
+	}
+
+	pollFrequency := b.workflow.defaultPollingFrequency
+	if opt.pollFrequency.Nanoseconds() != 0 {
+		pollFrequency = opt.pollFrequency
+	}
+
+	fn := func(ctx context.Context) error {
+		lastRunID, err := b.workflow.store.LastRunID(ctx, wc.Name(), wc.ForeignID())
+		if err != nil {
+			return err
+		}
+
+		key := MakeKey(w.Name, foreignID, lastRunID)
+		return awaitWorkflowStatusByForeignID[T](ctx, w, key, status, pollFrequency)
+	}
+
+}
+
+type ReflexConnector[T any] struct {
+	Stream    reflex.StreamFunc
+	ForeignID func(e *reflex.Event) (string, error)
+	EventType reflex.EventType
+	Consumer  ConsumerFunc[T]
+}
+
+func (b *Builder[T]) ConnectReflexStream(from string, rc ReflexConnector[T], to string, opts ...AwaitOption) {
+	var opt awaitOpts
+	for _, option := range opts {
+		option(&opt)
+	}
+
+	pollFrequency := b.workflow.defaultPollingFrequency
+	if opt.pollFrequency.Nanoseconds() != 0 {
+		pollFrequency = opt.pollFrequency
+	}
+
+	fn := func(ctx context.Context) error {
+		lastRunID, err := b.workflow.store.LastRunID(ctx, wc.Name(), wc.ForeignID())
+		if err != nil {
+			return err
+		}
+
+		key := MakeKey(w.Name, foreignID, lastRunID)
+		return awaitWorkflowStatusByForeignID[T](ctx, w, key, status, pollFrequency)
+	}
+
 }
 
 func (b *Builder[T]) Build(store Store, cursor Cursor, roleScheduler RoleScheduler, opts ...BuildOption) *Workflow[T] {
