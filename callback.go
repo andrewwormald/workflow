@@ -3,9 +3,10 @@ package workflow
 import (
 	"bytes"
 	"context"
+	"io"
+
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
-	"io"
 )
 
 func processCallback[T any](ctx context.Context, w *Workflow[T], currentStatus, destinationStatus string, fn CallbackFunc[T], foreignID string, payload io.Reader) error {
