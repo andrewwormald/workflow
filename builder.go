@@ -195,6 +195,7 @@ func (b *Builder[T]) Build(store Store, cursor Cursor, roleScheduler RoleSchedul
 
 	b.workflow.graph = b.buildGraph()
 	b.workflow.endPoints = b.determineEndPoints(b.workflow.graph)
+	b.workflow.debugMode = bo.debugMode
 
 	return b.workflow
 }
