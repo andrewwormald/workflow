@@ -312,7 +312,13 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 	for {
 		ctx, cancel, err := w.scheduler.AwaitRoleContext(ctx, role)
 		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
+			log.Error(ctx, errors.Wrap(err, "runner error"))
+		}
+
+		if w.debugMode {
+			log.Info(ctx, "runner obtained role", j.MKV{
+				"role": role,
+			})
 		}
 
 		if ctx.Err() != nil {
@@ -324,6 +330,7 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 					"destination_status": p.DestinationStatus,
 					"shard":              shard,
 					"total_shards":       totalShards,
+					"role":               role,
 				})
 			}
 			return
