@@ -35,6 +35,7 @@ func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string,
 			return err
 		}
 
+		var cursorUpdated bool
 		for _, r := range rs {
 			if totalShards > 1 {
 				if r.ID%totalShards != shard-1 {
@@ -87,11 +88,14 @@ func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string,
 			}
 
 			cursor = r.ID
+			cursorUpdated = true
 		}
 
-		err = w.cursor.Set(ctx, cName, strconv.FormatInt(cursor, 10))
-		if err != nil {
-			return err
+		if cursorUpdated {
+			err = w.cursor.Set(ctx, cName, strconv.FormatInt(cursor, 10))
+			if err != nil {
+				return err
+			}
 		}
 
 		err = wait(ctx, p.PollingFrequency)
