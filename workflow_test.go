@@ -443,7 +443,7 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 	b.AddStep("Updated email", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
 		t.Cellphone = "+44 349 8594"
 		return true, nil
-	}, "Updated Cellphone", workflow.WithStepPollingFrequency(time.Millisecond))
+	}, "Updated cellphone", workflow.WithStepPollingFrequency(time.Millisecond))
 
 	wf := b.Build(
 		memstore.New(),
@@ -463,11 +463,11 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 	expected := MyType{
 		Email: "andrew@workflow.com",
 	}
-	workflow.Require(t, wf, "Synced users", expected)
+	workflow.Require(t, wf, "Updated email", expected)
 
 	expected = MyType{
 		Email:     "andrew@workflow.com",
 		Cellphone: "+44 349 8594",
 	}
-	workflow.Require(t, wf, "Updated Cellphone", expected)
+	workflow.Require(t, wf, "Updated cellphone", expected)
 }
