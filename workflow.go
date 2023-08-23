@@ -12,7 +12,7 @@ import (
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/log"
-	"github.com/robfig/cron"
+	"github.com/robfig/cron/v3"
 	"k8s.io/utils/clock"
 )
 
@@ -114,7 +114,7 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 		return errors.Wrap(ErrStatusProvidedNotConfigured, fmt.Sprintf("ensure %v is configured for workflow: %v", startingStatus, w.Name))
 	}
 
-	schedule, err := cron.Parse(spec)
+	schedule, err := cron.ParseStandard(spec)
 	if err != nil {
 		return err
 	}
