@@ -105,11 +105,6 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 }
 
 func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, startingStatus string, spec string, opts ...TriggerOption[T]) error {
-	shouldRunFunc := func() (bool, error) { return true, nil }
-	return w.ScheduleTriggerConditionally(ctx, shouldRunFunc, foreignID, startingStatus, spec, opts...)
-}
-
-func (w *Workflow[T]) ScheduleTriggerConditionally(ctx context.Context, onCondition func() (bool, error), foreignID string, startingStatus string, spec string, opts ...TriggerOption[T]) error {
 	if !w.calledRun {
 		return errors.Wrap(ErrWorkflowNotRunning, "ensure Run() is called before attempting to trigger the workflow")
 	}
@@ -178,22 +173,6 @@ func (w *Workflow[T]) ScheduleTriggerConditionally(ctx context.Context, onCondit
 				"last_run":      lastRun,
 				"next_run":      nextRun,
 			}))
-			cancel()
-			continue
-		}
-
-		shouldRun, err := onCondition()
-		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "failed to determine whether to schedule", j.MKV{
-				"workflow_name":   w.Name,
-				"foreignID":       foreignID,
-				"starting_status": startingStatus,
-			}))
-			cancel()
-			continue
-		}
-
-		if !shouldRun {
 			cancel()
 			continue
 		}
