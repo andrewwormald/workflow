@@ -232,6 +232,10 @@ func (s *Store) LastRecordForWorkflow(ctx context.Context, workflowName string) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if len(s.workflowIndex[workflowName]) < 1 {
+		return nil, errors.Wrap(workflow.ErrRecordNotFound, "")
+	}
+
 	return s.workflowIndex[workflowName][len(s.workflowIndex[workflowName])-1], nil
 }
 

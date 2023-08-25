@@ -31,7 +31,7 @@ func TestWithStepErrBackOff(t *testing.T) {
 	require.Equal(t, time.Minute, wf.processes["Start"][0].ErrBackOff)
 }
 
-func ΩTestWithStepPollingFrequency(t *testing.T) {
+func TestWithStepPollingFrequency(t *testing.T) {
 	b := NewBuilder[string]("determine starting points")
 	b.AddStep("Start", nil, "Middle", WithStepPollingFrequency(time.Minute))
 	wf := b.Build(nil, nil, nil)
@@ -77,4 +77,36 @@ func TestAddingCallbacks(t *testing.T) {
 
 	require.Equal(t, "End", wf.callback["Start"][0].DestinationStatus)
 	require.NotNil(t, wf.callback["Start"][0].CallbackFunc)
+}
+
+func TestWithTimeoutErrBackOff(t *testing.T) {
+	b := NewBuilder[string]("determine starting points")
+	b.AddTimeout(
+		"Start",
+		DurationTimerFunc(time.Hour),
+		func(ctx context.Context, key Key, t *string, now time.Time) (bool, error) {
+			return true, nil
+		},
+		"End",
+		WithTimeoutErrBackOff(time.Minute),
+	)
+	wf := b.Build(nil, nil, nil)
+
+	require.Equal(t, time.Minute, wf.timeouts["Start"].ErrBackOff)
+}
+
+func TestWithTimeoutPollingFrequency(t *testing.T) {
+	b := NewBuilder[string]("determine starting points")
+	b.AddTimeout(
+		"Start",
+		DurationTimerFunc(time.Hour),
+		func(ctx context.Context, key Key, t *string, now time.Time) (bool, error) {
+			return true, nil
+		},
+		"End",
+		WithTimeoutPollingFrequency(time.Minute),
+	)
+	wf := b.Build(nil, nil, nil)
+
+	require.Equal(t, time.Minute, wf.timeouts["Start"].PollingFrequency)
 }

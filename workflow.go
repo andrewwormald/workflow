@@ -105,6 +105,11 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 }
 
 func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, startingStatus string, spec string, opts ...TriggerOption[T]) error {
+	shouldRunFunc := func() (bool, error) { return true, nil }
+	return w.ScheduleTriggerConditionally(ctx, shouldRunFunc, foreignID, startingStatus, spec, opts...)
+}
+
+func (w *Workflow[T]) ScheduleTriggerConditionally(ctx context.Context, onCondition func() (bool, error), foreignID string, startingStatus string, spec string, opts ...TriggerOption[T]) error {
 	if !w.calledRun {
 		return errors.Wrap(ErrWorkflowNotRunning, "ensure Run() is called before attempting to trigger the workflow")
 	}
@@ -173,6 +178,22 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 				"last_run":      lastRun,
 				"next_run":      nextRun,
 			}))
+			cancel()
+			continue
+		}
+
+		shouldRun, err := onCondition()
+		if err != nil {
+			log.Error(ctx, errors.Wrap(err, "failed to determine whether to schedule", j.MKV{
+				"workflow_name":   w.Name,
+				"foreignID":       foreignID,
+				"starting_status": startingStatus,
+			}))
+			cancel()
+			continue
+		}
+
+		if !shouldRun {
 			cancel()
 			continue
 		}
@@ -388,7 +409,7 @@ func timeoutRunner[T any](ctx context.Context, w *Workflow[T], status string, ti
 
 		err = pollTimeouts(ctx, w, status, timeouts)
 		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "runner error"))
+			log.Error(ctx, errors.Wrap(err, "timeout runner error"))
 		}
 
 		select {
@@ -422,9 +443,17 @@ func timeoutAutoInserterRunner[T any](ctx context.Context, w *Workflow[T], statu
 			ErrBackOff:       timeouts.ErrBackOff,
 			Consumer: func(ctx context.Context, key Key, t *T) (bool, error) {
 				for _, config := range timeouts.Transitions {
-					expireAt := w.clock.Now().Add(config.Duration)
+					ok, expireAt, err := config.TimerFunc(ctx, key, w.clock.Now())
+					if err != nil {
+						return false, err
+					}
 
-					err := w.store.CreateTimeout(ctx, key, status, expireAt)
+					if !ok {
+						// Ignore and evaluate the next transition
+						continue
+					}
+
+					err = w.store.CreateTimeout(ctx, key, status, expireAt)
 					if err != nil {
 						return false, err
 					}
@@ -484,13 +513,15 @@ type timeouts[T any] struct {
 
 type timeout[T any] struct {
 	DestinationStatus string
-	Duration          time.Duration
+	TimerFunc         TimerFunc
 	TimeoutFunc       TimeoutFunc[T]
 }
 
 type ConsumerFunc[T any] func(ctx context.Context, key Key, t *T) (bool, error)
 
 type CallbackFunc[T any] func(ctx context.Context, key Key, t *T, r io.Reader) (bool, error)
+
+type TimerFunc func(ctx context.Context, key Key, now time.Time) (bool, time.Time, error)
 
 type TimeoutFunc[T any] func(ctx context.Context, key Key, t *T, now time.Time) (bool, error)
 
@@ -502,5 +533,17 @@ func Not[T any](c ConsumerFunc[T]) ConsumerFunc[T] {
 		}
 
 		return !pass, nil
+	}
+}
+
+func DurationTimerFunc(duration time.Duration) TimerFunc {
+	return func(ctx context.Context, key Key, now time.Time) (bool, time.Time, error) {
+		return true, now.Add(duration), nil
+	}
+}
+
+func TimeTimerFunc(t time.Time) TimerFunc {
+	return func(ctx context.Context, key Key, now time.Time) (bool, time.Time, error) {
+		return true, t, nil
 	}
 }

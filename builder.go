@@ -111,45 +111,12 @@ func WithTimeoutErrBackOff(d time.Duration) TimeoutOption {
 	}
 }
 
-func (b *Builder[T]) AddTimeout(from string, tf TimeoutFunc[T], time time.Time, to string, opts ...TimeoutOption) {
-	timeouts := b.workflow.timeouts[from]
-
-	duration := time.Sub(b.workflow.clock.Now())
-
-	t := timeout[T]{
-		DestinationStatus: to,
-		Duration:          duration,
-		TimeoutFunc:       tf,
-	}
-
-	var topt timeoutOptions
-	for _, opt := range opts {
-		opt(&topt)
-	}
-
-	timeouts.PollingFrequency = b.workflow.defaultPollingFrequency
-	if topt.pollingFrequency.Nanoseconds() != 0 {
-		timeouts.PollingFrequency = topt.pollingFrequency
-	}
-
-	timeouts.ErrBackOff = b.workflow.defaultErrBackOff
-	if topt.errBackOff.Nanoseconds() != 0 {
-		timeouts.ErrBackOff = topt.errBackOff
-	}
-
-	timeouts.Transitions = append(timeouts.Transitions, t)
-
-	b.workflow.validStatuses[from] = true
-	b.workflow.validStatuses[to] = true
-	b.workflow.timeouts[from] = timeouts
-}
-
-func (b *Builder[T]) AddTimeoutWithDuration(from string, tf TimeoutFunc[T], duration time.Duration, to string, opts ...TimeoutOption) {
+func (b *Builder[T]) AddTimeout(from string, timer TimerFunc, tf TimeoutFunc[T], to string, opts ...TimeoutOption) {
 	timeouts := b.workflow.timeouts[from]
 
 	t := timeout[T]{
 		DestinationStatus: to,
-		Duration:          duration,
+		TimerFunc:         timer,
 		TimeoutFunc:       tf,
 	}
 

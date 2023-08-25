@@ -72,7 +72,7 @@ func TestWorkflow(t *testing.T) {
 	b.AddCallback(StatusEmailVerified, cellphoneNumberCallback, StatusCellphoneNumberSubmitted)
 	b.AddStep(StatusCellphoneNumberSubmitted, sendOTP, StatusOTPSent, workflow.WithParallelCount(5))
 	b.AddCallback(StatusOTPSent, otpCallback, StatusOTPVerified)
-	b.AddTimeoutWithDuration(StatusOTPVerified, waitForAccountCoolDown, time.Hour, StatusCompleted)
+	b.AddTimeout(StatusOTPVerified, workflow.DurationTimerFunc(time.Hour), waitForAccountCoolDown, StatusCompleted)
 
 	clock := clock_testing.NewFakeClock(time.Now())
 	wf := b.Build(
@@ -145,9 +145,9 @@ func TestPollingFrequency(t *testing.T) {
 		return true, nil
 	}, StatusProfileCreated, workflow.WithStepPollingFrequency(100*time.Millisecond))
 
-	b.AddTimeoutWithDuration(StatusProfileCreated, func(ctx context.Context, key workflow.Key, t *MyType, now time.Time) (bool, error) {
+	b.AddTimeout(StatusProfileCreated, workflow.DurationTimerFunc(time.Hour), func(ctx context.Context, key workflow.Key, t *MyType, now time.Time) (bool, error) {
 		return true, nil
-	}, time.Hour, StatusCompleted, workflow.WithTimeoutPollingFrequency(100*time.Millisecond))
+	}, StatusCompleted, workflow.WithTimeoutPollingFrequency(100*time.Millisecond))
 
 	clock := clock_testing.NewFakeClock(time.Now())
 	wf := b.Build(
@@ -470,4 +470,157 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 		Cellphone: "+44 349 8594",
 	}
 	workflow.Require(t, wf, "Updated cellphone", expected)
+}
+
+func TestWorkflow_ScheduleTriggerConditionally(t *testing.T) {
+	now := time.Date(2023, time.April, 9, 8, 30, 0, 0, time.UTC)
+	clock := clock_testing.NewFakeClock(now)
+	store := memstore.New(memstore.WithClock(clock))
+	b := workflow.NewBuilder[MyType]("sync users")
+
+	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, "Collected users", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	b.AddStep("Collected users", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, "Synced users", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	wf := b.Build(
+		store,
+		memcursor.New(),
+		memrolescheduler.New(),
+		workflow.WithClock(clock),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
+	wf.Run(ctx)
+
+	go func() {
+		err := wf.ScheduleTriggerConditionally(ctx, func() (bool, error) {
+			return true, nil
+		}, "andrew", "Started", "@monthly")
+		jtest.RequireNil(t, err)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	runID, err := store.LastRunID(ctx, "sync users", "andrew")
+	// Expect there to be no entries yet
+	jtest.Require(t, workflow.ErrRunIDNotFound, err)
+
+	// Grab the time from the clock for expectation as to the time we expect the entry to have
+	expectedTimestamp := time.Date(2023, time.May, 1, 0, 0, 0, 0, time.UTC)
+	clock.SetTime(expectedTimestamp)
+
+	// Allow scheduling to take place
+	time.Sleep(20 * time.Millisecond)
+
+	runID, err = store.LastRunID(ctx, "sync users", "andrew")
+	jtest.RequireNil(t, err)
+
+	key := workflow.MakeKey("sync users", "andrew", runID)
+	latest, err := store.LookupLatest(ctx, key)
+	jtest.RequireNil(t, err)
+
+	var mt MyType
+	serialised, err := workflow.Marshal(&mt)
+	jtest.RequireNil(t, err)
+
+	expected := workflow.Record{
+		ID:           3,
+		RunID:        runID,
+		WorkflowName: "sync users",
+		ForeignID:    "andrew",
+		Status:       "Synced users",
+		IsStart:      false,
+		IsEnd:        true,
+		Object:       serialised,
+		CreatedAt:    expectedTimestamp,
+	}
+	require.Equal(t, expected, *latest)
+
+	expectedTimestamp = time.Date(2023, time.June, 1, 0, 0, 0, 0, time.UTC)
+	clock.SetTime(expectedTimestamp)
+
+	// Allow scheduling to take place
+	time.Sleep(20 * time.Millisecond)
+
+	runID, err = store.LastRunID(ctx, "sync users", "andrew")
+	jtest.RequireNil(t, err)
+
+	key = workflow.MakeKey("sync users", "andrew", runID)
+	latest, err = store.LookupLatest(ctx, key)
+	jtest.RequireNil(t, err)
+
+	secondExpected := workflow.Record{
+		ID:           6,
+		RunID:        runID,
+		WorkflowName: "sync users",
+		ForeignID:    "andrew",
+		Status:       "Synced users",
+		IsStart:      false,
+		IsEnd:        true,
+		Object:       serialised,
+		CreatedAt:    expectedTimestamp,
+	}
+	require.Equal(t, secondExpected, *latest)
+}
+
+func TestWorkflow_ScheduleTriggerConditionally_DontSchedule(t *testing.T) {
+	now := time.Date(2023, time.April, 9, 8, 30, 0, 0, time.UTC)
+	clock := clock_testing.NewFakeClock(now)
+	store := memstore.New(memstore.WithClock(clock))
+	b := workflow.NewBuilder[MyType]("sync users")
+
+	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, "Collected users", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	b.AddStep("Collected users", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, "Synced users", workflow.WithStepPollingFrequency(time.Millisecond))
+
+	wf := b.Build(
+		store,
+		memcursor.New(),
+		memrolescheduler.New(),
+		workflow.WithClock(clock),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
+	wf.Run(ctx)
+
+	conditionFunc := func() (bool, error) {
+		return false, nil
+	}
+
+	go func() {
+		err := wf.ScheduleTriggerConditionally(ctx, conditionFunc, "andrew", "Started", "@monthly")
+		jtest.RequireNil(t, err)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	_, err := store.LastRunID(ctx, "sync users", "andrew")
+	// Expect there to be no entries yet
+	jtest.Require(t, workflow.ErrRunIDNotFound, err)
+
+	// Grab the time from the clock for expectation as to the time we expect the entry to have
+	expectedTimestamp := time.Date(2023, time.May, 1, 0, 0, 0, 0, time.UTC)
+	clock.SetTime(expectedTimestamp)
+
+	// Allow scheduling to take place
+	time.Sleep(20 * time.Millisecond)
+
+	_, err = store.LastRunID(ctx, "sync users", "andrew")
+	// Expect there to be no entries yet
+	jtest.Require(t, workflow.ErrRunIDNotFound, err)
+
+	_, err = store.LastRecordForWorkflow(ctx, "sync users")
+	jtest.Require(t, workflow.ErrRecordNotFound, err)
 }

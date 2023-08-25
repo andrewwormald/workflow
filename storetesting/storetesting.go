@@ -290,8 +290,11 @@ func testLastRunIDErrRunIDNotFound(t *testing.T, store workflow.Store) {
 func testLastRecordForWorkflow(t *testing.T, store workflow.Store) {
 	ctx := context.Background()
 
+	_, err := store.LastRecordForWorkflow(ctx, "first_workflow")
+	jtest.Require(t, workflow.ErrRecordNotFound, err)
+
 	key := workflow.MakeKey("first_workflow", "example_foreign_id", "LSDKLJFN-SKDFJB-WERLTBE")
-	err := store.Store(ctx, key, "Started", []byte("{example: true}"), true, false)
+	err = store.Store(ctx, key, "Started", []byte("{example: true}"), true, false)
 	jtest.RequireNil(t, err)
 
 	err = store.Store(ctx, key, "Completed", []byte("{example: true}"), false, true)
