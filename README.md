@@ -67,6 +67,7 @@ if err != nil {
 }
 
 // OR
+
 conditionFunc := func() (bool, error) {
  return false, nil
 }
