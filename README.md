@@ -61,7 +61,18 @@ if err != nil {
 ##### See the standard cron spec below that can be used for scheduling triggers
 ```go
 foreignID := "andrew@workflow.com"
-runID, err := workflow.ScheduleTrigger(ctx, foreignID, "Start", "@monthly")
+err := workflow.ScheduleTrigger(ctx, foreignID, "Start", "@monthly")
+if err != nil {
+    panic(err)
+}
+
+// OR
+
+conditionFunc := func() (bool, error) {
+ return false, nil
+}
+
+err := workflow.ScheduleTriggerConditionally(ctx, conditionFunc, foreignID, "Start", "@monthly")
 if err != nil {
     panic(err)
 }
