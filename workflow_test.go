@@ -133,7 +133,7 @@ func TestWorkflow(t *testing.T) {
 	require.Equal(t, expectedOTPVerified, actual.OTPVerified)
 }
 
-func TestPollingFrequency(t *testing.T) {
+func TestTimeout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
 		cancel()
@@ -176,6 +176,45 @@ func TestPollingFrequency(t *testing.T) {
 
 	fmt.Println(end.Sub(start))
 	require.True(t, end.Sub(start) < 1*time.Second)
+}
+
+func TestPollingFrequency(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
+
+	b := workflow.NewBuilder[MyType]("user sign up")
+
+	b.AddStep(StatusInitiated, func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, StatusProfileCreated, workflow.WithStepPollingFrequency(100*time.Millisecond))
+
+	b.AddStep(StatusProfileCreated, func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+		return true, nil
+	}, StatusCompleted, workflow.WithStepPollingFrequency(100*time.Millisecond))
+
+	clock := clock_testing.NewFakeClock(time.Now())
+	wf := b.Build(
+		memstore.New(memstore.WithClock(clock)),
+		memcursor.New(),
+		memrolescheduler.New(),
+		workflow.WithClock(clock),
+	)
+	wf.Run(ctx)
+
+	start := time.Now()
+
+	_, err := wf.Trigger(ctx, "example", StatusInitiated)
+	jtest.RequireNil(t, err)
+
+	_, err = wf.Await(ctx, "example", StatusCompleted, workflow.WithPollingFrequency(time.Nanosecond))
+	jtest.RequireNil(t, err)
+
+	end := time.Now()
+
+	// Each poll is 100 milliseconds. There are 2 steps in the workflow. Total duration should be 200 milliseconds.
+	require.True(t, end.Sub(start).Truncate(time.Millisecond) == 200*time.Millisecond)
 }
 
 var (
