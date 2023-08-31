@@ -10,7 +10,7 @@ type RoleScheduler struct {
 	roles map[string]*sync.Mutex
 }
 
-func (r *RoleScheduler) AwaitRoleContext(ctx context.Context, role string) (context.Context, context.CancelFunc, error) {
+func (r *RoleScheduler) Await(ctx context.Context, role string) (context.Context, context.CancelFunc, error) {
 	ctx2, cancel := context.WithCancel(ctx)
 
 	// Lock the main mutex whilst checking and potentially creating new role mutexes
