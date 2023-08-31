@@ -20,6 +20,11 @@ func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string,
 		return err
 	}
 
+	if val == "" {
+		// Set to default value of a string 0
+		val = "0"
+	}
+
 	cursor, err := strconv.ParseInt(val, 10, 64)
 	if err != nil {
 		return err
