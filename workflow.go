@@ -122,7 +122,7 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 	role := strings.Join([]string{w.Name, startingStatus, foreignID, "scheduler", spec}, "-")
 
 	for {
-		ctx, cancel, err := w.scheduler.AwaitRoleContext(ctx, role)
+		ctx, cancel, err := w.scheduler.Await(ctx, role)
 		if err != nil {
 			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
 		}
@@ -310,7 +310,7 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 	)
 
 	for {
-		ctx, cancel, err := w.scheduler.AwaitRoleContext(ctx, role)
+		ctx, cancel, err := w.scheduler.Await(ctx, role)
 		if err != nil {
 			log.Error(ctx, errors.Wrap(err, "runner error"))
 		}
@@ -381,7 +381,7 @@ func timeoutRunner[T any](ctx context.Context, w *Workflow[T], status string, ti
 	role := makeRole(w.Name, status, "timeout-runner")
 
 	for {
-		ctx, cancel, err := w.scheduler.AwaitRoleContext(ctx, role)
+		ctx, cancel, err := w.scheduler.Await(ctx, role)
 		if err != nil {
 			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
 		}
@@ -412,7 +412,7 @@ func timeoutAutoInserterRunner[T any](ctx context.Context, w *Workflow[T], statu
 	role := makeRole(w.Name, status, "timeout-auto-inserter-runner")
 
 	for {
-		ctx, cancel, err := w.scheduler.AwaitRoleContext(ctx, role)
+		ctx, cancel, err := w.scheduler.Await(ctx, role)
 		if err != nil {
 			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
 		}

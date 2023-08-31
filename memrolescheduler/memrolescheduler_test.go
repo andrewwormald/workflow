@@ -16,7 +16,7 @@ func TestAwaitRoleContext(t *testing.T) {
 		ctx := context.Background()
 		ctxWithValue := context.WithValue(ctx, "parent", "context")
 
-		ctx2, cancel, err := rs.AwaitRoleContext(ctxWithValue, "leader")
+		ctx2, cancel, err := rs.Await(ctxWithValue, "leader")
 		jtest.RequireNil(t, err)
 
 		t.Cleanup(cancel)
@@ -26,7 +26,7 @@ func TestAwaitRoleContext(t *testing.T) {
 
 		roleReleased := make(chan bool, 1)
 		go func(done chan bool) {
-			_, _, err := rs.AwaitRoleContext(ctxWithValue, "leader")
+			_, _, err := rs.Await(ctxWithValue, "leader")
 			jtest.RequireNil(t, err)
 
 			roleReleased <- true
@@ -50,7 +50,7 @@ func TestAwaitRoleContext(t *testing.T) {
 		rs := memrolescheduler.New()
 		ctx := context.Background()
 
-		_, cancel, err := rs.AwaitRoleContext(ctx, "leader")
+		_, cancel, err := rs.Await(ctx, "leader")
 		jtest.RequireNil(t, err)
 
 		t.Cleanup(cancel)
@@ -60,7 +60,7 @@ func TestAwaitRoleContext(t *testing.T) {
 
 		roleReleased := make(chan bool, 1)
 		go func(ctx context.Context, done chan bool) {
-			_, _, err := rs.AwaitRoleContext(ctx2, "leader")
+			_, _, err := rs.Await(ctx2, "leader")
 			jtest.RequireNil(t, err)
 
 			roleReleased <- true
