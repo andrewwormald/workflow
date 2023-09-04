@@ -1,4 +1,4 @@
-# Workflow [In development]
+# Workflow
 
 Workflow is a Golang workflow framework that encompasses n main features:
 
