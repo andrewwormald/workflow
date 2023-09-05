@@ -29,30 +29,44 @@ type YinYang struct {
 
 ### Step 2: Building a workflow
 ```go
-b := workflow.NewBuilder[YinYang]("example", store, store)
+b := workflow.NewBuilder[YinYang]("example")
 b.AddStep("Start", func(ctx context.Context, key workflow.Key, yy *YinYang) (bool, error) {
-	yy.Yin = true
-	return true, nil
+    yy.Yin = true
+    return true, nil
 }, "Middle")
 
-b.AddCallback("Middle", func(ctx context.Context, key workflow.Key, yy *YinYang) (bool, error) {
-	yy.Yang = true
-	return true, nil
+b.AddCallback("Middle", func(ctx context.Context, key workflow.Key, yy *YinYang, r io.Reader) (bool, error) {
+    yy.Yang = true
+    return true, nil
 }, "End")
 
-
-workflow := b.Build()
+wf := b.Build(
+	store,
+	cursor,
+	scheduler,
+)
 ```
 
 ### Step 3: Call Run to launch the consumers in the background
 ```go
-workflow.Run(ctx)
+wf.Run(ctx)
 ```
 
 ### Step 4: Triggering the workflow
 ```go
 foreignID := "andrew@workflow.com"
-runID, err := workflow.Trigger(ctx, foreignID, "Start")
+runID, err := wf.Trigger(ctx, foreignID, "Start")
+if err != nil {
+    panic(err)
+}
+```
+#### Example of providing a non-zero value starting point of the primary type (YinYang):
+```go 
+startingValue := &YinYang{
+    Yin: true,
+}
+
+runID, err := wf.Trigger(ctx, foreignID, "Start", workflow.WithInitialValue(startingValue))
 if err != nil {
     panic(err)
 }
@@ -61,18 +75,7 @@ if err != nil {
 ##### See the standard cron spec below that can be used for scheduling triggers
 ```go
 foreignID := "andrew@workflow.com"
-err := workflow.ScheduleTrigger(ctx, foreignID, "Start", "@monthly")
-if err != nil {
-    panic(err)
-}
-
-// OR
-
-conditionFunc := func() (bool, error) {
- return false, nil
-}
-
-err := workflow.ScheduleTriggerConditionally(ctx, conditionFunc, foreignID, "Start", "@monthly")
+err := wf.ScheduleTrigger(ctx, foreignID, "Start", "@monthly")
 if err != nil {
     panic(err)
 }
@@ -89,7 +92,7 @@ if err != nil {
 
 ### Step 5 A: If you wish for a async await pattern after calling Trigger
 ```go
-yinYang, err := workflow.Await(ctx, foreignID, runID, "End")
+yinYang, err := wf.Await(ctx, foreignID, "End")
 if err != nil {
     panic(err)
 }
@@ -100,7 +103,7 @@ If you were to switch out an automated step for a callback, where the workflow p
 
 ##### Configuring the callback
 ```go
-builder.AddCallback("Middle", func(ctx context.Context, key workflow.Key, t *YinYang, r io.Reader) (bool, error) {
+b.AddCallback("Middle", func(ctx context.Context, key workflow.Key, t *YinYang, r io.Reader) (bool, error) {
     b, err := io.ReadAll(r)
     if err != nil {
         return false, err
@@ -133,7 +136,7 @@ if err != nil {
 
 reader := bytes.NewReader(b)
 
-err = workflow.Callback(ctx, foreignID, "Middle", reader)
+err = wf.Callback(ctx, foreignID, "Middle", reader)
 if err != nil {
     panic(err)
 }
@@ -143,25 +146,32 @@ if err != nil {
 If you were to switch out an automated step for a timeout, a scheduled process, then this is what it would look like:
 ##### Configuring the timeout
 ```go
-builder.AddTimeout(
+b.AddTimeout(
     "Middle",
-    func(ctx context.Context, key workflow.Key, t *YinYang, now time.Time) (bool, error) {
-        yy.Yang = true
+    func(ctx context.Context, key workflow.Key, now time.Time) (bool, time.Time, error) {
+        
+    },
+    func(ctx context.Context, key Key, t *string, now time.Time) (bool, error) {
         return true, nil
     },
-    time.Date(2023, time.April, 9, 0, 0, 0, 0, time.UTC),
     "End",
 )
-```
-##### OR use duration
-```go
-builder.AddTimeoutWithDuration(
+
+b.AddTimeout(
     "Middle",
-    func(ctx context.Context, key workflow.Key, t *YinYang, now time.Time) (bool, error) {
-        yy.Yang = true
+    workflow.TimeTimerFunc(time.Hour),
+    func(ctx context.Context, key Key, t *string, now time.Time) (bool, error) {
         return true, nil
     },
-    24 * time.Hour, // one day
+    "End",
+)
+
+b.AddTimeout(
+    "Middle",
+    workflow.DurationTimerFunc(time.Hour),
+    func(ctx context.Context, key Key, t *string, now time.Time) (bool, error) {
+        return true, nil
+    },
     "End",
 )
 ```
@@ -172,13 +182,41 @@ One core focus of `workflow` is to be easily tested.
 
 The `testing.go` file houses utility functions for testing your workflow. Some other
  useful patterns is to use `k8s.io/utils/clock/testing` testing clock to manipulate
- time and ensure your functions are executing at the exact time and date that they should/ 
+ time and ensure your functions are executing at the exact time and date that they should/
+
+`Require`: Allows for placing assertions or requirements on the state at a specific point in the workflow.
+```go
+expected := YinYang{
+	Yin:   true,
+	Yang:  false,
+}
+
+wf.Require(t, wf, "Middle", expected)
+
+expected = YinYang{
+    Yin:   true,
+    Yang:  true,
+}
+
+wf.Require(t, wf, "End", expected)
+```
 
 `TriggerCallbackOn`: Allows you to easily simulate a callback when the workflow is at a specific
- point in its flow.
+point in its flow.
+```go
+wf.TriggerCallbackOn(t, wf, fid, "Middle", External{
+    Thing: "Something",
+})
+```
 
 `AwaitTimeoutInsert`: AwaitTimoutInsert helps wait for the timout to be created after which you can use the clock
  to change the time to speed up / skip the timeout process
+```go
+wf.AwaitTimeoutInsert(t, wf, "Middle")
+
+// Advance time forward by one hour to trigger the timeout
+clock.Step(time.Hour)
+```
 
 ## Authors
 

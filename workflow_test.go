@@ -510,3 +510,60 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 	}
 	workflow.Require(t, wf, "Updated cellphone", expected)
 }
+
+func TestTimeTimerFunc(t *testing.T) {
+	type YinYang struct {
+		Yin  bool
+		Yang bool
+	}
+
+	b := workflow.NewBuilder[YinYang]("timer_func")
+
+	launchDate := time.Date(1992, time.April, 9, 0, 0, 0, 0, time.UTC)
+	b.AddTimeout("Pending", workflow.TimeTimerFunc(launchDate), func(ctx context.Context, key workflow.Key, t *YinYang, now time.Time) (bool, error) {
+		t.Yin = true
+		t.Yang = true
+		return true, nil
+	},
+		"Launched",
+	)
+
+	b.AddTimeout("Pending",
+		func(ctx context.Context, key workflow.Key, now time.Time) (bool, time.Time, error) {
+
+		}
+		func(ctx context.Context, key workflow.Key, t *YinYang, now time.Time) (bool, error) {
+		t.Yin = true
+		t.Yang = true
+		return true, nil
+	},
+		"Launched",
+	)
+
+	now := time.Date(1991, time.December, 25, 8, 30, 0, 0, time.UTC)
+	clock := clock_testing.NewFakeClock(now)
+
+	wf := b.Build(
+		memstore.New(),
+		memcursor.New(),
+		memrolescheduler.New(),
+		workflow.WithClock(clock),
+	)
+
+	ctx := context.Background()
+	wf.Run(ctx)
+
+
+	_, err := wf.Trigger(ctx, "Andrew Wormald", "Pending")
+	jtest.RequireNil(t, err)
+
+	workflow.AwaitTimeoutInsert(t, wf, "Pending")
+
+	clock.SetTime(launchDate)
+
+	expected := YinYang{
+		Yin:  true,
+		Yang: true,
+	}
+	workflow.Require(t, wf, "Launched", expected)
+}
