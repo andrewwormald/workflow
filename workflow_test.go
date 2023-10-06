@@ -528,18 +528,6 @@ func TestTimeTimerFunc(t *testing.T) {
 		"Launched",
 	)
 
-	b.AddTimeout("Pending",
-		func(ctx context.Context, key workflow.Key, now time.Time) (bool, time.Time, error) {
-
-		}
-		func(ctx context.Context, key workflow.Key, t *YinYang, now time.Time) (bool, error) {
-		t.Yin = true
-		t.Yang = true
-		return true, nil
-	},
-		"Launched",
-	)
-
 	now := time.Date(1991, time.December, 25, 8, 30, 0, 0, time.UTC)
 	clock := clock_testing.NewFakeClock(now)
 
@@ -552,7 +540,6 @@ func TestTimeTimerFunc(t *testing.T) {
 
 	ctx := context.Background()
 	wf.Run(ctx)
-
 
 	_, err := wf.Trigger(ctx, "Andrew Wormald", "Pending")
 	jtest.RequireNil(t, err)
