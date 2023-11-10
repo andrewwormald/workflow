@@ -6,27 +6,27 @@ import (
 	"time"
 )
 
-func NewBuilder[T any](name string) *Builder[T] {
-	return &Builder[T]{
-		workflow: &Workflow[T]{
+func NewBuilder[Type any, Status ~string](name string) *Builder[Type, Status] {
+	return &Builder[Type, Status]{
+		workflow: &Workflow[Type, Status]{
 			Name:                    name,
 			clock:                   clock.RealClock{},
 			defaultPollingFrequency: 500 * time.Millisecond,
 			defaultErrBackOff:       500 * time.Millisecond,
-			processes:               make(map[string][]process[T]),
-			callback:                make(map[string][]callback[T]),
-			timeouts:                make(map[string]timeouts[T]),
-			validStatuses:           make(map[string]bool),
+			processes:               make(map[Status][]process[Type, Status]),
+			callback:                make(map[Status][]callback[Type, Status]),
+			timeouts:                make(map[Status]timeouts[Type, Status]),
+			validStatuses:           make(map[Status]bool),
 		},
 	}
 }
 
-type Builder[T any] struct {
-	workflow *Workflow[T]
+type Builder[Type any, Status ~string] struct {
+	workflow *Workflow[Type, Status]
 }
 
-func (b *Builder[T]) AddStep(from string, c ConsumerFunc[T], to string, opts ...StepOption) {
-	p := process[T]{
+func (b *Builder[Type, Status]) AddStep(from Status, c ConsumerFunc[Type, Status], to Status, opts ...StepOption) {
+	p := process[Type, Status]{
 		DestinationStatus: to,
 		Consumer:          c,
 	}
@@ -40,11 +40,6 @@ func (b *Builder[T]) AddStep(from string, c ConsumerFunc[T], to string, opts ...
 		p.ParallelCount = so.parallelCount
 	}
 
-	p.PollingFrequency = b.workflow.defaultPollingFrequency
-	if so.pollingFrequency.Nanoseconds() != 0 {
-		p.PollingFrequency = so.pollingFrequency
-	}
-
 	p.ErrBackOff = b.workflow.defaultErrBackOff
 	if so.errBackOff.Nanoseconds() != 0 {
 		p.ErrBackOff = so.errBackOff
@@ -56,9 +51,8 @@ func (b *Builder[T]) AddStep(from string, c ConsumerFunc[T], to string, opts ...
 }
 
 type stepOptions struct {
-	parallelCount    int64
-	pollingFrequency time.Duration
-	errBackOff       time.Duration
+	parallelCount int64
+	errBackOff    time.Duration
 }
 
 type StepOption func(so *stepOptions)
@@ -69,20 +63,14 @@ func WithParallelCount(instances int64) StepOption {
 	}
 }
 
-func WithStepPollingFrequency(d time.Duration) StepOption {
-	return func(so *stepOptions) {
-		so.pollingFrequency = d
-	}
-}
-
 func WithStepErrBackOff(d time.Duration) StepOption {
 	return func(so *stepOptions) {
 		so.errBackOff = d
 	}
 }
 
-func (b *Builder[T]) AddCallback(from string, fn CallbackFunc[T], to string) {
-	c := callback[T]{
+func (b *Builder[Type, Status]) AddCallback(from Status, fn CallbackFunc[Type, Status], to Status) {
+	c := callback[Type, Status]{
 		DestinationStatus: to,
 		CallbackFunc:      fn,
 	}
@@ -111,10 +99,10 @@ func WithTimeoutErrBackOff(d time.Duration) TimeoutOption {
 	}
 }
 
-func (b *Builder[T]) AddTimeout(from string, timer TimerFunc, tf TimeoutFunc[T], to string, opts ...TimeoutOption) {
+func (b *Builder[Type, Status]) AddTimeout(from Status, timer TimerFunc[Type, Status], tf TimeoutFunc[Type, Status], to Status, opts ...TimeoutOption) {
 	timeouts := b.workflow.timeouts[from]
 
-	t := timeout[T]{
+	t := timeout[Type, Status]{
 		DestinationStatus: to,
 		TimerFunc:         timer,
 		TimeoutFunc:       tf,
@@ -142,9 +130,10 @@ func (b *Builder[T]) AddTimeout(from string, timer TimerFunc, tf TimeoutFunc[T],
 	b.workflow.timeouts[from] = timeouts
 }
 
-func (b *Builder[T]) Build(store Store, cursor Cursor, roleScheduler RoleScheduler, opts ...BuildOption) *Workflow[T] {
-	b.workflow.store = store
-	b.workflow.cursor = cursor
+func (b *Builder[Type, Status]) Build(esc EventStreamerConstructor, rs RecordStore, ts TimeoutStore, roleScheduler RoleScheduler, opts ...BuildOption) *Workflow[Type, Status] {
+	b.workflow.eventStreamerFn = esc
+	b.workflow.recordStore = rs
+	b.workflow.timeoutStore = ts
 	b.workflow.scheduler = roleScheduler
 
 	var bo buildOptions
@@ -186,12 +175,12 @@ func WithDebugMode() BuildOption {
 	}
 }
 
-func (b *Builder[T]) buildGraph() map[string][]string {
-	graph := make(map[string][]string)
+func (b *Builder[Type, Status]) buildGraph() map[Status][]Status {
+	graph := make(map[Status][]Status)
 	dedupe := make(map[string]bool)
 	for s, i := range b.workflow.processes {
 		for _, p := range i {
-			key := path.Join(s, p.DestinationStatus)
+			key := path.Join(string(s), string(p.DestinationStatus))
 			if dedupe[key] {
 				continue
 			}
@@ -203,7 +192,7 @@ func (b *Builder[T]) buildGraph() map[string][]string {
 
 	for s, i := range b.workflow.callback {
 		for _, c := range i {
-			key := path.Join(s, c.DestinationStatus)
+			key := path.Join(string(s), string(c.DestinationStatus))
 			if dedupe[key] {
 				continue
 			}
@@ -215,7 +204,7 @@ func (b *Builder[T]) buildGraph() map[string][]string {
 
 	for s, t := range b.workflow.timeouts {
 		for _, t := range t.Transitions {
-			key := path.Join(s, t.DestinationStatus)
+			key := path.Join(string(s), string(t.DestinationStatus))
 			if dedupe[key] {
 				continue
 			}
@@ -228,8 +217,8 @@ func (b *Builder[T]) buildGraph() map[string][]string {
 	return graph
 }
 
-func (b *Builder[T]) determineEndPoints(graph map[string][]string) map[string]bool {
-	endpoints := make(map[string]bool)
+func (b *Builder[Type, Status]) determineEndPoints(graph map[Status][]Status) map[Status]bool {
+	endpoints := make(map[Status]bool)
 	for _, destinations := range graph {
 		for _, destination := range destinations {
 			_, ok := graph[destination]

@@ -4,9 +4,9 @@ import "time"
 
 type Timeout struct {
 	ID           int64
-	RunID        string
 	WorkflowName string
 	ForeignID    string
+	RunID        string
 	Status       string
 	Completed    bool
 	ExpireAt     time.Time

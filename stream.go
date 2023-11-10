@@ -2,108 +2,114 @@ package workflow
 
 import (
 	"context"
-	"strconv"
+	"fmt"
 	"time"
 
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 )
 
-func streamAndConsume[T any](ctx context.Context, w *Workflow[T], status string, p process[T], shard, totalShards int64) error {
-	cName := cursorName(w.Name, status, shard, totalShards)
+type EventStreamerConstructor interface {
+	NewProducer(workflowName string, status string) Producer
+	NewConsumer(workflowName string, status string) Consumer
+}
 
-	val, err := w.cursor.Get(ctx, cName)
-	if errors.Is(err, ErrCursorNotFound) {
-		// Set to default value of a string 0
-		val = "0"
-	} else if err != nil {
-		return err
-	}
+// TODO: Add send meta data like stack traces
+type Producer interface {
+	Send(ctx context.Context, r *WireRecord) error
+	Close() error
+}
 
-	if val == "" {
-		// Set to default value of a string 0
-		val = "0"
-	}
+type Consumer interface {
+	Recv(ctx context.Context) (*WireRecord, Ack, error)
+	Close() error
+}
 
-	cursor, err := strconv.ParseInt(val, 10, 64)
+// Ack is used for the event streamer to update it's cursor of what messages have
+// been consumed. If Ack is not called then the event streamer, depending on implementation,
+// will likely not keep track of which records / events have been consumed.
+type Ack func() error
+
+func update(ctx context.Context, streamFn EventStreamerConstructor, store RecordStore, wr *WireRecord) error {
+	err := store.Store(ctx, wr)
 	if err != nil {
 		return err
 	}
+
+	return streamFn.NewProducer(wr.WorkflowName, wr.Status).Send(ctx, wr)
+}
+
+func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], p process[Type, Status], status Status) error {
+	stream := w.eventStreamerFn.NewConsumer(w.Name, string(status))
+	defer stream.Close()
 
 	for {
 		if ctx.Err() != nil {
 			return errors.Wrap(ErrStreamingClosed, "")
 		}
 
-		rs, err := w.store.Batch(ctx, w.Name, status, cursor, 1000)
+		r, ack, err := stream.Recv(ctx)
 		if err != nil {
 			return err
 		}
 
-		var cursorUpdated bool
-		for _, r := range rs {
-			if totalShards > 1 {
-				if r.ID%totalShards != shard-1 {
-					// Ensure this consumer is intended to process this event
-					continue
-				}
-			}
-
-			key := MakeKey(r.WorkflowName, r.ForeignID, r.RunID)
-			latest, err := w.store.LookupLatest(ctx, key)
-			if err != nil {
-				return err
-			}
-
-			if latest.Status != status {
-				// Event is out of date, for idempotence skip the event record and only process the event record
-				// that matches the latest record inserted
-				continue
-			}
-
-			var t T
-			err = Unmarshal(r.Object, &t)
-			if err != nil {
-				return err
-			}
-
-			ok, err := p.Consumer(ctx, key, &t)
-			if err != nil {
-				return errors.Wrap(err, "failed to process", j.MKV{
-					"workflow_name":      r.WorkflowName,
-					"foreign_id":         r.ForeignID,
-					"current_status":     r.Status,
-					"destination_status": p.DestinationStatus,
-				})
-			}
-
-			if ok {
-				b, err := Marshal(&t)
-				if err != nil {
-					return err
-				}
-
-				isEnd := w.endPoints[p.DestinationStatus]
-
-				// isStart is only true at time of trigger and thus default set to false
-				err = w.store.Store(ctx, key, p.DestinationStatus, b, false, isEnd)
-				if err != nil {
-					return err
-				}
-			}
-
-			cursor = r.ID
-			cursorUpdated = true
+		latest, err := w.recordStore.Latest(ctx, r.WorkflowName, r.ForeignID)
+		if err != nil {
+			return err
 		}
 
-		if cursorUpdated {
-			err = w.cursor.Set(ctx, cName, strconv.FormatInt(cursor, 10))
+		if latest.Status != r.Status {
+			continue
+		}
+
+		var t Type
+		err = Unmarshal(r.Object, &t)
+		if err != nil {
+			return err
+		}
+
+		record := Record[Type, Status]{
+			WireRecord: *r,
+			Status:     Status(r.Status),
+			Object:     &t,
+		}
+
+		ok, err := p.Consumer(ctx, &record)
+		if err != nil {
+			return errors.Wrap(err, "failed to process", j.MKV{
+				"workflow_name":      r.WorkflowName,
+				"foreign_id":         r.ForeignID,
+				"current_status":     r.Status,
+				"destination_status": p.DestinationStatus,
+			})
+		}
+
+		if ok {
+			fmt.Println("Consumed with 👍", *r)
+			b, err := Marshal(&record.Object)
+			if err != nil {
+				return err
+			}
+
+			isEnd := w.endPoints[p.DestinationStatus]
+			wr := &WireRecord{
+				RunID:        record.RunID,
+				WorkflowName: record.WorkflowName,
+				ForeignID:    record.ForeignID,
+				Status:       string(p.DestinationStatus),
+				IsStart:      false,
+				IsEnd:        isEnd,
+				Object:       b,
+				CreatedAt:    record.CreatedAt,
+			}
+
+			err = update(ctx, w.eventStreamerFn, w.recordStore, wr)
 			if err != nil {
 				return err
 			}
 		}
 
-		err = wait(ctx, p.PollingFrequency)
+		err = ack()
 		if err != nil {
 			return err
 		}
@@ -124,90 +130,125 @@ func wait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func awaitWorkflowStatusByForeignID[T any](ctx context.Context, w *Workflow[T], key Key, status string, pollFrequency time.Duration) (*T, error) {
+func awaitWorkflowStatusByForeignID[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, foreignID, runID string, pollFrequency time.Duration) (*Record[Type, Status], error) {
+	stream := w.eventStreamerFn.NewConsumer(w.Name, string(status))
+	defer stream.Close()
+
 	for {
 		if ctx.Err() != nil {
 			return nil, errors.Wrap(ErrStreamingClosed, "")
 		}
 
-		r, err := w.store.Find(ctx, key, status)
-		if errors.Is(err, ErrRecordNotFound) {
-			err = wait(ctx, pollFrequency)
-			if err != nil {
-				return nil, err
-			}
-
-			// Try again
-			continue
-		} else if err != nil {
-			return nil, err
-		}
-
-		var t T
+		r, ack, err := stream.Recv(ctx)
+		var t Type
 		err = Unmarshal(r.Object, &t)
 		if err != nil {
 			return nil, err
 		}
 
-		return &t, nil
+		fmt.Println("New event for await", *r)
+
+		err = ack()
+		if err != nil {
+			return nil, err
+		}
+
+		if r.ForeignID != foreignID {
+			err := wait(ctx, pollFrequency)
+			if err != nil {
+				return nil, err
+			}
+
+			continue
+		}
+
+		if r.RunID != runID {
+			err := wait(ctx, pollFrequency)
+			if err != nil {
+				return nil, err
+			}
+
+			continue
+		}
+
+		record := Record[Type, Status]{
+			WireRecord: *r,
+			Status:     Status(r.Status),
+			Object:     &t,
+		}
+
+		return &record, nil
 	}
 }
 
 // pollTimeouts attempts to find the very next
-func pollTimeouts[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) error {
+func pollTimeouts[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) error {
 	for {
 		if ctx.Err() != nil {
 			return errors.Wrap(ErrStreamingClosed, "")
 		}
 
-		expiredTimeouts, err := w.store.ListValidTimeouts(ctx, w.Name, status, w.clock.Now())
+		expiredTimeouts, err := w.timeoutStore.ListValid(ctx, w.Name, string(status), w.clock.Now())
 		if err != nil {
 			return err
 		}
 
 		for _, expiredTimeout := range expiredTimeouts {
-			key := MakeKey(expiredTimeout.WorkflowName, expiredTimeout.ForeignID, expiredTimeout.RunID)
-			r, err := w.store.LookupLatest(ctx, key)
+			r, err := w.recordStore.Latest(ctx, expiredTimeout.WorkflowName, expiredTimeout.ForeignID)
 			if err != nil {
 				return err
 			}
 
-			if r.Status != status {
+			if r.Status != string(status) {
 				// Object has been updated already. Mark timeout as cancelled as it is no longer valid.
-				err = w.store.CancelTimeout(ctx, expiredTimeout.ID)
+				err = w.timeoutStore.Cancel(ctx, expiredTimeout.WorkflowName, expiredTimeout.ForeignID, expiredTimeout.RunID, expiredTimeout.Status)
 				if err != nil {
 					return err
 				}
 			}
 
-			var t T
+			var t Type
 			err = Unmarshal(r.Object, &t)
 			if err != nil {
 				return err
 			}
 
+			record := Record[Type, Status]{
+				WireRecord: *r,
+				Status:     Status(r.Status),
+				Object:     &t,
+			}
+
 			for _, config := range timeouts.Transitions {
-				ok, err := config.TimeoutFunc(ctx, key, &t, w.clock.Now())
+				ok, err := config.TimeoutFunc(ctx, &record, w.clock.Now())
 				if err != nil {
 					return err
 				}
 
 				if ok {
-					b, err := Marshal(&t)
+					object, err := Marshal(&t)
 					if err != nil {
 						return err
 					}
 
-					isEnd := w.endPoints[config.DestinationStatus]
+					wr := &WireRecord{
+						WorkflowName: record.WorkflowName,
+						ForeignID:    record.ForeignID,
+						RunID:        record.RunID,
+						Status:       string(config.DestinationStatus),
+						IsStart:      false,
+						IsEnd:        w.endPoints[config.DestinationStatus],
+						Object:       object,
+						CreatedAt:    record.CreatedAt,
+					}
 
-					// isStart is only true at time of trigger and thus default set to false
-					err = w.store.Store(ctx, key, config.DestinationStatus, b, false, isEnd)
+					err = update(ctx, w.eventStreamerFn, w.recordStore, wr)
 					if err != nil {
 						return err
 					}
 
 					// Mark timeout as having been executed (aka completed) only in the case that true is returned.
-					err = w.store.CompleteTimeout(ctx, expiredTimeout.ID)
+					err = w.timeoutStore.Complete(ctx, record.WorkflowName, record.ForeignID, record.RunID, string(record.Status))
 					if err != nil {
 						return err
 					}

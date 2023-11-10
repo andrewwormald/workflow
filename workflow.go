@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"github.com/robfig/cron/v3"
 	"io"
 	"strings"
 	"sync"
@@ -12,11 +13,10 @@ import (
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/log"
-	"github.com/robfig/cron/v3"
 	"k8s.io/utils/clock"
 )
 
-type Workflow[T any] struct {
+type Workflow[Type any, Status ~string] struct {
 	Name string
 
 	clock                   clock.Clock
@@ -26,22 +26,23 @@ type Workflow[T any] struct {
 	calledRun bool
 	once      sync.Once
 
-	store     Store
-	cursor    Cursor
-	scheduler RoleScheduler
+	eventStreamerFn EventStreamerConstructor
+	recordStore     RecordStore
+	timeoutStore    TimeoutStore
+	scheduler       RoleScheduler
 
-	processes map[string][]process[T]
-	callback  map[string][]callback[T]
-	timeouts  map[string]timeouts[T]
+	processes map[Status][]process[Type, Status]
+	callback  map[Status][]callback[Type, Status]
+	timeouts  map[Status]timeouts[Type, Status]
 
-	graph         map[string][]string
-	endPoints     map[string]bool
-	validStatuses map[string]bool
+	graph         map[Status][]Status
+	endPoints     map[Status]bool
+	validStatuses map[Status]bool
 
 	debugMode bool
 }
 
-func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingStatus string, opts ...TriggerOption[T]) (runID string, err error) {
+func (w *Workflow[Type, Status]) Trigger(ctx context.Context, foreignID string, startingStatus Status, opts ...TriggerOption[Type, Status]) (runID string, err error) {
 	if !w.calledRun {
 		return "", errors.Wrap(ErrWorkflowNotRunning, "ensure Run() is called before attempting to trigger the workflow")
 	}
@@ -51,12 +52,12 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 		return "", errors.Wrap(ErrStatusProvidedNotConfigured, fmt.Sprintf("ensure %v is configured for workflow: %v", startingStatus, w.Name))
 	}
 
-	var o triggerOpts[T]
+	var o triggerOpts[Type, Status]
 	for _, fn := range opts {
 		fn(&o)
 	}
 
-	var t T
+	var t Type
 	if o.initialValue != nil {
 		t = *o.initialValue
 	}
@@ -66,27 +67,17 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 		return "", err
 	}
 
-	hasExisitngWorkflow := true
-	lastRunID, err := w.store.LastRunID(ctx, w.Name, foreignID)
-	if errors.Is(err, ErrRunIDNotFound) {
-		hasExisitngWorkflow = false
+	lastRecord, err := w.recordStore.Latest(ctx, w.Name, foreignID)
+	if errors.Is(err, ErrRecordNotFound) {
+		lastRecord = &WireRecord{}
 	} else if err != nil {
 		return "", err
 	}
 
-	// Ensure the the previous existing workflow has been completed.
-	if hasExisitngWorkflow {
-		lastKey := MakeKey(w.Name, foreignID, lastRunID)
-		lastRecord, err := w.store.LookupLatest(ctx, lastKey)
-		if err != nil {
-			return "", err
-		}
-
-		// Check that the last entry for that workflow was a terminal step when entered.
-		if !lastRecord.IsEnd {
-			// Cannot trigger a new workflow for this foreignID if there is a workflow in progress
-			return "", errors.Wrap(ErrWorkflowInProgress, "")
-		}
+	// Check that the last entry for that workflow was a terminal step when entered.
+	if lastRecord.RunID != "" && !lastRecord.IsEnd {
+		// Cannot trigger a new workflow for this foreignID if there is a workflow in progress
+		return "", errors.Wrap(ErrWorkflowInProgress, "")
 	}
 
 	uid, err := uuid.NewUUID()
@@ -94,17 +85,30 @@ func (w *Workflow[T]) Trigger(ctx context.Context, foreignID string, startingSta
 		return "", err
 	}
 
-	key := MakeKey(w.Name, foreignID, uid.String())
-	// isStart is always true when being stored as the trigger as it is the beginning of the workflow
-	isStart := true
+	runID = uid.String()
+	wr := &WireRecord{
+		RunID:        runID,
+		WorkflowName: w.Name,
+		ForeignID:    foreignID,
+		Status:       string(startingStatus),
+		// isStart is always true when being stored as the trigger as it is the beginning of the workflow
+		IsStart: true,
+		// isEnd is always false as there should always be more than one node in the graph so that there can be a
+		// transition between statuses / states.
+		IsEnd:     false,
+		Object:    object,
+		CreatedAt: w.clock.Now(),
+	}
 
-	// isEnd is always false as there should always be more than one node in the graph so that there can be a
-	// transition between statuses / states.
-	isEnd := false
-	return key.RunID, w.store.Store(ctx, key, startingStatus, object, isStart, isEnd)
+	err = update(ctx, w.eventStreamerFn, w.recordStore, wr)
+	if err != nil {
+		return "", err
+	}
+
+	return runID, nil
 }
 
-func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, startingStatus string, spec string, opts ...TriggerOption[T]) error {
+func (w *Workflow[Type, Status]) ScheduleTrigger(ctx context.Context, foreignID string, startingStatus Status, spec string, opts ...TriggerOption[Type, Status]) error {
 	if !w.calledRun {
 		return errors.Wrap(ErrWorkflowNotRunning, "ensure Run() is called before attempting to trigger the workflow")
 	}
@@ -119,7 +123,7 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 		return err
 	}
 
-	role := strings.Join([]string{w.Name, startingStatus, foreignID, "scheduler", spec}, "-")
+	role := strings.Join([]string{w.Name, string(startingStatus), foreignID, "scheduler", spec}, "-")
 
 	for {
 		ctx, cancel, err := w.scheduler.Await(ctx, role)
@@ -127,9 +131,10 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
 		}
 
-		lastRunID, err := w.store.LastRunID(ctx, w.Name, foreignID)
-		if errors.Is(err, ErrRunIDNotFound) {
+		latestEntry, err := w.recordStore.Latest(ctx, w.Name, foreignID)
+		if errors.Is(err, ErrRecordNotFound) {
 			// NoReturnErr: Rather use zero value for lastRunID and use current clock for first run.
+			latestEntry = &WireRecord{}
 		} else if err != nil {
 			log.Error(ctx, errors.Wrap(err, "schedule trigger error - lookup latest record", j.MKV{
 				"workflow_name":   w.Name,
@@ -140,23 +145,7 @@ func (w *Workflow[T]) ScheduleTrigger(ctx context.Context, foreignID string, sta
 			continue
 		}
 
-		var lastRun time.Time
-		if lastRunID != "" {
-			storeKey := MakeKey(w.Name, foreignID, lastRunID)
-			latestEntry, err := w.store.LookupLatest(ctx, storeKey)
-			if err != nil {
-				log.Error(ctx, errors.Wrap(err, "schedule trigger error - lookup latest record", j.MKV{
-					"workflow_name":   w.Name,
-					"foreignID":       foreignID,
-					"starting_status": startingStatus,
-				}))
-				cancel()
-				continue
-			}
-
-			// Use the last attempt as the last run
-			lastRun = latestEntry.CreatedAt
-		}
+		lastRun := latestEntry.CreatedAt
 
 		// If there is no previous executions of this workflow then schedule the very next from now.
 		if lastRun.IsZero() {
@@ -208,20 +197,20 @@ func waitUntil(ctx context.Context, clock clock.Clock, until time.Time) error {
 	}
 }
 
-type triggerOpts[T any] struct {
-	initialValue   *T
+type triggerOpts[Type any, Status ~string] struct {
+	initialValue   *Type
 	startingStatus int
 }
 
-type TriggerOption[T any] func(o *triggerOpts[T])
+type TriggerOption[Type any, Status ~string] func(o *triggerOpts[Type, Status])
 
-func WithInitialValue[T any](t *T) TriggerOption[T] {
-	return func(o *triggerOpts[T]) {
+func WithInitialValue[Type any, Status ~string](t *Type) TriggerOption[Type, Status] {
+	return func(o *triggerOpts[Type, Status]) {
 		o.initialValue = t
 	}
 }
 
-func (w *Workflow[T]) Await(ctx context.Context, foreignID string, status string, opts ...AwaitOption) (*T, error) {
+func (w *Workflow[Type, Status]) Await(ctx context.Context, foreignID, runID string, status Status, opts ...AwaitOption) (*Record[Type, Status], error) {
 	var opt awaitOpts
 	for _, option := range opts {
 		option(&opt)
@@ -232,13 +221,7 @@ func (w *Workflow[T]) Await(ctx context.Context, foreignID string, status string
 		pollFrequency = opt.pollFrequency
 	}
 
-	lastRunID, err := w.store.LastRunID(ctx, w.Name, foreignID)
-	if err != nil {
-		return nil, err
-	}
-
-	key := MakeKey(w.Name, foreignID, lastRunID)
-	return awaitWorkflowStatusByForeignID[T](ctx, w, key, status, pollFrequency)
+	return awaitWorkflowStatusByForeignID[Type, Status](ctx, w, status, foreignID, runID, pollFrequency)
 }
 
 type awaitOpts struct {
@@ -253,7 +236,7 @@ func WithPollingFrequency(d time.Duration) AwaitOption {
 	}
 }
 
-func (w *Workflow[T]) Callback(ctx context.Context, foreignID string, status string, payload io.Reader) error {
+func (w *Workflow[Type, Status]) Callback(ctx context.Context, foreignID string, status Status, payload io.Reader) error {
 	for _, s := range w.callback[status] {
 		err := processCallback(ctx, w, status, s.DestinationStatus, s.CallbackFunc, foreignID, payload)
 		if err != nil {
@@ -264,22 +247,14 @@ func (w *Workflow[T]) Callback(ctx context.Context, foreignID string, status str
 	return nil
 }
 
-func (w *Workflow[T]) Run(ctx context.Context) {
+func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 	// Ensure that the background consumers are only initialized once
 	w.once.Do(func() {
 		w.calledRun = true
 
 		for currentStatus, processes := range w.processes {
 			for _, p := range processes {
-				if p.ParallelCount < 2 {
-					// Launch all processes in runners
-					go runner(ctx, w, currentStatus, p, 1, 1)
-				} else {
-					// Run as sharded parallel consumers
-					for i := int64(1); i <= p.ParallelCount; i++ {
-						go runner(ctx, w, currentStatus, p, i, p.ParallelCount)
-					}
-				}
+				go runner(ctx, w, currentStatus, p)
 			}
 		}
 
@@ -290,7 +265,7 @@ func (w *Workflow[T]) Run(ctx context.Context) {
 	})
 }
 
-func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p process[T], shard, totalShards int64) {
+func runner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], currentStatus Status, p process[Type, Status]) {
 	if w.debugMode {
 		log.Info(ctx, "launched runner", j.MKV{
 			"workflow_name": w.Name,
@@ -301,12 +276,9 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 
 	role := makeRole(
 		w.Name,
-		currentStatus,
-		p.DestinationStatus,
+		string(currentStatus),
+		string(p.DestinationStatus),
 		"runner",
-		fmt.Sprintf("%v", shard),
-		"of",
-		fmt.Sprintf("%v", totalShards),
 	)
 
 	for {
@@ -328,23 +300,19 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 					"workflow_name":      w.Name,
 					"current_status":     currentStatus,
 					"destination_status": p.DestinationStatus,
-					"shard":              shard,
-					"total_shards":       totalShards,
 					"role":               role,
 				})
 			}
 			return
 		}
 
-		err = streamAndConsume(ctx, w, currentStatus, p, shard, totalShards)
+		err = runStepConsumerForever[Type, Status](ctx, w, p, currentStatus)
 		if errors.Is(err, ErrStreamingClosed) {
 			if w.debugMode {
 				log.Info(ctx, "shutting down process - runner", j.MKV{
 					"workflow_name":      w.Name,
 					"current_status":     currentStatus,
 					"destination_status": p.DestinationStatus,
-					"shard":              shard,
-					"total_shards":       totalShards,
 				})
 			}
 		} else if err != nil {
@@ -359,8 +327,6 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 					"workflow_name":      w.Name,
 					"current_status":     currentStatus,
 					"destination_status": p.DestinationStatus,
-					"shard":              shard,
-					"total_shards":       totalShards,
 				})
 			}
 			return
@@ -370,7 +336,7 @@ func runner[T any](ctx context.Context, w *Workflow[T], currentStatus string, p 
 	}
 }
 
-func timeoutRunner[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) {
+func timeoutRunner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
 	if w.debugMode {
 		log.Info(ctx, "launched timeout runner", j.MKV{
 			"workflow_name": w.Name,
@@ -378,7 +344,7 @@ func timeoutRunner[T any](ctx context.Context, w *Workflow[T], status string, ti
 		})
 	}
 
-	role := makeRole(w.Name, status, "timeout-runner")
+	role := makeRole(w.Name, string(status), "timeout-runner")
 
 	for {
 		ctx, cancel, err := w.scheduler.Await(ctx, role)
@@ -401,7 +367,7 @@ func timeoutRunner[T any](ctx context.Context, w *Workflow[T], status string, ti
 	}
 }
 
-func timeoutAutoInserterRunner[T any](ctx context.Context, w *Workflow[T], status string, timeouts timeouts[T]) {
+func timeoutAutoInserterRunner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
 	if w.debugMode {
 		log.Info(ctx, "launched timeout auto inserter runner", j.MKV{
 			"workflow_name": w.Name,
@@ -409,7 +375,7 @@ func timeoutAutoInserterRunner[T any](ctx context.Context, w *Workflow[T], statu
 		})
 	}
 
-	role := makeRole(w.Name, status, "timeout-auto-inserter-runner")
+	role := makeRole(w.Name, string(status), "timeout-auto-inserter-runner")
 
 	for {
 		ctx, cancel, err := w.scheduler.Await(ctx, role)
@@ -417,22 +383,22 @@ func timeoutAutoInserterRunner[T any](ctx context.Context, w *Workflow[T], statu
 			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
 		}
 
-		err = streamAndConsume(ctx, w, status, process[T]{
+		err = runStepConsumerForever(ctx, w, process[Type, Status]{
 			PollingFrequency: timeouts.PollingFrequency,
 			ErrBackOff:       timeouts.ErrBackOff,
-			Consumer: func(ctx context.Context, key Key, t *T) (bool, error) {
+			Consumer: func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
 				for _, config := range timeouts.Transitions {
-					ok, expireAt, err := config.TimerFunc(ctx, key, w.clock.Now())
+					ok, expireAt, err := config.TimerFunc(ctx, r, w.clock.Now())
 					if err != nil {
 						return false, err
 					}
 
 					if !ok {
-						// Ignore and evaluate the next transition
+						// Ignore and evaluate the next
 						continue
 					}
 
-					err = w.store.CreateTimeout(ctx, key, status, expireAt)
+					err = w.timeoutStore.Create(ctx, r.WorkflowName, r.ForeignID, r.RunID, string(status), expireAt)
 					if err != nil {
 						return false, err
 					}
@@ -442,7 +408,7 @@ func timeoutAutoInserterRunner[T any](ctx context.Context, w *Workflow[T], statu
 				return false, nil
 			},
 			ParallelCount: 1,
-		}, 1, 1)
+		}, status)
 		if errors.Is(err, ErrStreamingClosed) {
 			if w.debugMode {
 				log.Info(ctx, "shutting down process - timeout auto inserter runner", j.MKV{
@@ -471,42 +437,42 @@ func makeRole(inputs ...string) string {
 	return filled
 }
 
-type process[T any] struct {
+type process[Type any, Status ~string] struct {
 	PollingFrequency  time.Duration
 	ErrBackOff        time.Duration
-	DestinationStatus string
-	Consumer          ConsumerFunc[T]
+	DestinationStatus Status
+	Consumer          ConsumerFunc[Type, Status]
 	ParallelCount     int64
 }
 
-type callback[T any] struct {
-	DestinationStatus string
-	CallbackFunc      CallbackFunc[T]
+type callback[Type any, Status ~string] struct {
+	DestinationStatus Status
+	CallbackFunc      CallbackFunc[Type, Status]
 }
 
-type timeouts[T any] struct {
+type timeouts[Type any, Status ~string] struct {
 	PollingFrequency time.Duration
 	ErrBackOff       time.Duration
-	Transitions      []timeout[T]
+	Transitions      []timeout[Type, Status]
 }
 
-type timeout[T any] struct {
-	DestinationStatus string
-	TimerFunc         TimerFunc
-	TimeoutFunc       TimeoutFunc[T]
+type timeout[Type any, Status ~string] struct {
+	DestinationStatus Status
+	TimerFunc         TimerFunc[Type, Status]
+	TimeoutFunc       TimeoutFunc[Type, Status]
 }
 
-type ConsumerFunc[T any] func(ctx context.Context, key Key, t *T) (bool, error)
+type ConsumerFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status]) (bool, error)
 
-type CallbackFunc[T any] func(ctx context.Context, key Key, t *T, r io.Reader) (bool, error)
+type CallbackFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], reader io.Reader) (bool, error)
 
-type TimerFunc func(ctx context.Context, key Key, now time.Time) (bool, time.Time, error)
+type TimerFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, time.Time, error)
 
-type TimeoutFunc[T any] func(ctx context.Context, key Key, t *T, now time.Time) (bool, error)
+type TimeoutFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, error)
 
-func Not[T any](c ConsumerFunc[T]) ConsumerFunc[T] {
-	return func(ctx context.Context, key Key, t *T) (bool, error) {
-		pass, err := c(ctx, key, t)
+func Not[Type any, Status ~string](c ConsumerFunc[Type, Status]) ConsumerFunc[Type, Status] {
+	return func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
+		pass, err := c(ctx, r)
 		if err != nil {
 			return false, err
 		}
@@ -515,14 +481,14 @@ func Not[T any](c ConsumerFunc[T]) ConsumerFunc[T] {
 	}
 }
 
-func DurationTimerFunc(duration time.Duration) TimerFunc {
-	return func(ctx context.Context, key Key, now time.Time) (bool, time.Time, error) {
+func DurationTimerFunc[Type any, Status ~string](duration time.Duration) TimerFunc[Type, Status] {
+	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, time.Time, error) {
 		return true, now.Add(duration), nil
 	}
 }
 
-func TimeTimerFunc(t time.Time) TimerFunc {
-	return func(ctx context.Context, key Key, now time.Time) (bool, time.Time, error) {
+func TimeTimerFunc[Type any, Status ~string](t time.Time) TimerFunc[Type, Status] {
+	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, time.Time, error) {
 		return true, t, nil
 	}
 }

@@ -9,29 +9,28 @@ import (
 	"github.com/luno/jettison/j"
 )
 
-func processCallback[T any](ctx context.Context, w *Workflow[T], currentStatus, destinationStatus string, fn CallbackFunc[T], foreignID string, payload io.Reader) error {
-	runID, err := w.store.LastRunID(ctx, w.Name, foreignID)
+func processCallback[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], currentStatus, destinationStatus Status, fn CallbackFunc[Type, Status], foreignID string, payload io.Reader) error {
+	latest, err := w.recordStore.Latest(ctx, w.Name, foreignID)
 	if err != nil {
-		return errors.Wrap(err, "failed to lookup last run id for callback", j.MKV{
+		return errors.Wrap(err, "failed to latest record for callback", j.MKV{
 			"foreign_id": foreignID,
 		})
 	}
 
-	key := MakeKey(w.Name, foreignID, runID)
-	latest, err := w.store.LookupLatest(ctx, key)
-	if err != nil {
-		return err
-	}
-
-	if latest.Status != currentStatus {
+	if latest.Status != string(currentStatus) {
 		// Latest record shows that the current status is in a different state than expected so skip.
 		return nil
 	}
 
-	var t T
+	var t Type
 	err = Unmarshal(latest.Object, &t)
 	if err != nil {
 		return err
+	}
+
+	record := &Record[Type, Status]{
+		WireRecord: *latest,
+		Object:     &t,
 	}
 
 	if payload == nil {
@@ -40,7 +39,7 @@ func processCallback[T any](ctx context.Context, w *Workflow[T], currentStatus, 
 		payload = bytes.NewReader([]byte{})
 	}
 
-	ok, err := fn(ctx, key, &t, payload)
+	ok, err := fn(ctx, record, payload)
 	if err != nil {
 		return err
 	}
@@ -49,12 +48,21 @@ func processCallback[T any](ctx context.Context, w *Workflow[T], currentStatus, 
 		return nil
 	}
 
-	object, err := Marshal(&t)
+	object, err := Marshal(&record.Object)
 	if err != nil {
 		return err
 	}
 
-	isEnd := w.endPoints[destinationStatus]
-	// isStart is only true at time of trigger and thus default set to false
-	return w.store.Store(ctx, key, destinationStatus, object, false, isEnd)
+	wr := &WireRecord{
+		WorkflowName: record.WorkflowName,
+		ForeignID:    record.ForeignID,
+		RunID:        record.RunID,
+		Status:       string(destinationStatus),
+		IsStart:      false,
+		IsEnd:        w.endPoints[destinationStatus],
+		Object:       object,
+		CreatedAt:    record.CreatedAt,
+	}
+
+	return update(ctx, w.eventStreamerFn, w.recordStore, wr)
 }

@@ -15,9 +15,10 @@ import (
 	clock_testing "k8s.io/utils/clock/testing"
 
 	"github.com/andrewwormald/workflow"
-	"github.com/andrewwormald/workflow/memcursor"
-	"github.com/andrewwormald/workflow/memrolescheduler"
-	"github.com/andrewwormald/workflow/memstore"
+	"github.com/andrewwormald/workflow/connectors/eventstreaming/memstreamer"
+	"github.com/andrewwormald/workflow/connectors/recordstores/memrecordstore"
+	"github.com/andrewwormald/workflow/connectors/roleschedulers/memrolescheduler"
+	"github.com/andrewwormald/workflow/connectors/timeoutstores/memtimeoutstore"
 )
 
 type MyType struct {
@@ -63,21 +64,22 @@ func TestWorkflow(t *testing.T) {
 		cancel()
 	})
 
-	store := memstore.New()
-
-	b := workflow.NewBuilder[MyType]("user sign up")
+	b := workflow.NewBuilder[MyType, string]("user sign up")
 	b.AddStep(StatusInitiated, createProfile, StatusProfileCreated)
 	b.AddStep(StatusProfileCreated, sendEmailConfirmation, StatusEmailConfirmationSent, workflow.WithParallelCount(5))
 	b.AddCallback(StatusEmailConfirmationSent, emailVerifiedCallback, StatusEmailVerified)
 	b.AddCallback(StatusEmailVerified, cellphoneNumberCallback, StatusCellphoneNumberSubmitted)
 	b.AddStep(StatusCellphoneNumberSubmitted, sendOTP, StatusOTPSent, workflow.WithParallelCount(5))
 	b.AddCallback(StatusOTPSent, otpCallback, StatusOTPVerified)
-	b.AddTimeout(StatusOTPVerified, workflow.DurationTimerFunc(time.Hour), waitForAccountCoolDown, StatusCompleted)
+	b.AddTimeout(StatusOTPVerified, workflow.DurationTimerFunc[MyType, string](time.Hour), waitForAccountCoolDown, StatusCompleted)
 
+	recordStore := memrecordstore.New()
+	timeoutStore := memtimeoutstore.New()
 	clock := clock_testing.NewFakeClock(time.Now())
 	wf := b.Build(
-		store,
-		memcursor.New(),
+		memstreamer.New(),
+		recordStore,
+		timeoutStore,
 		memrolescheduler.New(),
 		workflow.WithClock(clock),
 	)
@@ -90,33 +92,32 @@ func TestWorkflow(t *testing.T) {
 		UserID: expectedUserID,
 	}
 
-	runID, err := wf.Trigger(ctx, fid, StatusInitiated, workflow.WithInitialValue(&mt))
+	runID, err := wf.Trigger(ctx, fid, StatusInitiated, workflow.WithInitialValue[MyType, string](&mt))
 	jtest.RequireNil(t, err)
 
 	// Once in the correct state, trigger third party callbacks
-	workflow.TriggerCallbackOn(t, wf, fid, StatusEmailConfirmationSent, ExternalEmailVerified{
+	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusEmailConfirmationSent, ExternalEmailVerified{
 		IsVerified: true,
 	})
 
-	workflow.TriggerCallbackOn(t, wf, fid, StatusEmailVerified, ExternalCellPhoneSubmitted{
+	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusEmailVerified, ExternalCellPhoneSubmitted{
 		DialingCode: "+44",
 		Number:      "7467623292",
 	})
 
-	workflow.TriggerCallbackOn(t, wf, fid, StatusOTPSent, ExternalOTP{
+	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusOTPSent, ExternalOTP{
 		OTPCode: expectedOTP,
 	})
 
-	workflow.AwaitTimeoutInsert(t, wf, StatusOTPVerified)
+	workflow.AwaitTimeoutInsert(t, wf, StatusOTPVerified, fid, runID)
 
 	// Advance time forward by one hour to trigger the timeout
 	clock.Step(time.Hour)
 
-	_, err = wf.Await(ctx, fid, StatusCompleted)
+	_, err = wf.Await(ctx, fid, runID, StatusCompleted)
 	jtest.RequireNil(t, err)
 
-	key := workflow.MakeKey("user sign up", fid, runID)
-	r, err := store.LookupLatest(ctx, key)
+	r, err := recordStore.Latest(ctx, "user sign up", fid)
 	jtest.RequireNil(t, err)
 	require.Equal(t, expectedFinalStatus, r.Status)
 
@@ -139,82 +140,49 @@ func TestTimeout(t *testing.T) {
 		cancel()
 	})
 
-	b := workflow.NewBuilder[MyType]("user sign up")
+	b := workflow.NewBuilder[MyType, string]("user sign up")
 
-	b.AddStep(StatusInitiated, func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+	b.AddStep(StatusInitiated, func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
 		return true, nil
-	}, StatusProfileCreated, workflow.WithStepPollingFrequency(100*time.Millisecond))
+	}, StatusProfileCreated)
 
-	b.AddTimeout(StatusProfileCreated, workflow.DurationTimerFunc(time.Hour), func(ctx context.Context, key workflow.Key, t *MyType, now time.Time) (bool, error) {
+	b.AddTimeout(StatusProfileCreated, workflow.DurationTimerFunc[MyType, string](time.Hour), func(ctx context.Context, t *workflow.Record[MyType, string], now time.Time) (bool, error) {
 		return true, nil
 	}, StatusCompleted, workflow.WithTimeoutPollingFrequency(100*time.Millisecond))
 
+	recordStore := memrecordstore.New()
+	timeoutStore := memtimeoutstore.New()
 	clock := clock_testing.NewFakeClock(time.Now())
 	wf := b.Build(
-		memstore.New(memstore.WithClock(clock)),
-		memcursor.New(),
+		memstreamer.New(),
+		recordStore,
+		timeoutStore,
 		memrolescheduler.New(),
 		workflow.WithClock(clock),
 	)
+
 	wf.Run(ctx)
 
 	start := time.Now()
 
-	_, err := wf.Trigger(ctx, "example", StatusInitiated)
+	runID, err := wf.Trigger(ctx, "example", StatusInitiated)
 	jtest.RequireNil(t, err)
 
-	_, err = wf.Await(ctx, "example", StatusProfileCreated, workflow.WithPollingFrequency(300*time.Millisecond))
+	_, err = wf.Await(ctx, "example", runID, StatusProfileCreated)
 	jtest.RequireNil(t, err)
+
+	workflow.AwaitTimeoutInsert(t, wf, StatusProfileCreated, "example", runID)
 
 	// Advance time forward by one hour to trigger the timeout
 	clock.Step(time.Hour)
 
-	_, err = wf.Await(ctx, "example", StatusCompleted)
+	_, err = wf.Await(ctx, "example", runID, StatusCompleted)
 	jtest.RequireNil(t, err)
 
 	end := time.Now()
 
 	fmt.Println(end.Sub(start))
 	require.True(t, end.Sub(start) < 1*time.Second)
-}
-
-func TestPollingFrequency(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(func() {
-		cancel()
-	})
-
-	b := workflow.NewBuilder[MyType]("user sign up")
-
-	b.AddStep(StatusInitiated, func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
-		return true, nil
-	}, StatusProfileCreated, workflow.WithStepPollingFrequency(100*time.Millisecond))
-
-	b.AddStep(StatusProfileCreated, func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
-		return true, nil
-	}, StatusCompleted, workflow.WithStepPollingFrequency(100*time.Millisecond))
-
-	clock := clock_testing.NewFakeClock(time.Now())
-	wf := b.Build(
-		memstore.New(memstore.WithClock(clock)),
-		memcursor.New(),
-		memrolescheduler.New(),
-		workflow.WithClock(clock),
-	)
-	wf.Run(ctx)
-
-	start := time.Now()
-
-	_, err := wf.Trigger(ctx, "example", StatusInitiated)
-	jtest.RequireNil(t, err)
-
-	_, err = wf.Await(ctx, "example", StatusCompleted, workflow.WithPollingFrequency(time.Nanosecond))
-	jtest.RequireNil(t, err)
-
-	end := time.Now()
-
-	// Each poll is 100 milliseconds. There are 2 steps in the workflow. Total duration should be 200 milliseconds.
-	require.True(t, end.Sub(start).Truncate(time.Millisecond) == 200*time.Millisecond)
 }
 
 var (
@@ -227,18 +195,18 @@ var (
 	expectedOTPVerified       = true
 )
 
-func createProfile(ctx context.Context, key workflow.Key, mt *MyType) (bool, error) {
-	mt.Profile = "Andrew Wormald"
+func createProfile(ctx context.Context, mt *workflow.Record[MyType, string]) (bool, error) {
+	mt.Object.Profile = "Andrew Wormald"
 	fmt.Println("creating profile", *mt)
 	return true, nil
 }
 
-func sendEmailConfirmation(ctx context.Context, key workflow.Key, mt *MyType) (bool, error) {
+func sendEmailConfirmation(ctx context.Context, mt *workflow.Record[MyType, string]) (bool, error) {
 	fmt.Println("sending email confirmation", *mt)
 	return true, nil
 }
 
-func emailVerifiedCallback(ctx context.Context, key workflow.Key, mt *MyType, r io.Reader) (bool, error) {
+func emailVerifiedCallback(ctx context.Context, mt *workflow.Record[MyType, string], r io.Reader) (bool, error) {
 	fmt.Println("email verification callback", *mt)
 
 	b, err := io.ReadAll(r)
@@ -253,13 +221,13 @@ func emailVerifiedCallback(ctx context.Context, key workflow.Key, mt *MyType, r 
 	}
 
 	if ev.IsVerified {
-		mt.Email = "andreww@luno.com"
+		mt.Object.Email = "andreww@luno.com"
 	}
 
 	return true, nil
 }
 
-func cellphoneNumberCallback(ctx context.Context, key workflow.Key, mt *MyType, r io.Reader) (bool, error) {
+func cellphoneNumberCallback(ctx context.Context, mt *workflow.Record[MyType, string], r io.Reader) (bool, error) {
 	fmt.Println("cell phone number callback", *mt)
 	b, err := io.ReadAll(r)
 	if err != nil {
@@ -273,19 +241,19 @@ func cellphoneNumberCallback(ctx context.Context, key workflow.Key, mt *MyType, 
 	}
 
 	if ev.DialingCode != "" && ev.Number != "" {
-		mt.Cellphone = fmt.Sprintf("%v %v", ev.DialingCode, ev.Number)
+		mt.Object.Cellphone = fmt.Sprintf("%v %v", ev.DialingCode, ev.Number)
 	}
 
 	return true, nil
 }
 
-func sendOTP(ctx context.Context, key workflow.Key, mt *MyType) (bool, error) {
+func sendOTP(ctx context.Context, mt *workflow.Record[MyType, string]) (bool, error) {
 	fmt.Println("send otp", *mt)
-	mt.OTP = expectedOTP
+	mt.Object.OTP = expectedOTP
 	return true, nil
 }
 
-func otpCallback(ctx context.Context, key workflow.Key, mt *MyType, r io.Reader) (bool, error) {
+func otpCallback(ctx context.Context, mt *workflow.Record[MyType, string], r io.Reader) (bool, error) {
 	fmt.Println("otp callback", *mt)
 	b, err := io.ReadAll(r)
 	if err != nil {
@@ -299,75 +267,83 @@ func otpCallback(ctx context.Context, key workflow.Key, mt *MyType, r io.Reader)
 	}
 
 	if otp.OTPCode == expectedOTP {
-		mt.OTPVerified = true
+		mt.Object.OTPVerified = true
 	}
 
 	return true, nil
 }
 
-func waitForAccountCoolDown(ctx context.Context, key workflow.Key, mt *MyType, now time.Time) (bool, error) {
+func waitForAccountCoolDown(ctx context.Context, mt *workflow.Record[MyType, string], now time.Time) (bool, error) {
 	fmt.Println(fmt.Sprintf("completed waiting for account cool down %v at %v", *mt, now.String()))
 	return true, nil
 }
 
 func TestNot(t *testing.T) {
 	t.Run("Not - flip true to false", func(t *testing.T) {
-		fn := workflow.Not[string](func(ctx context.Context, key workflow.Key, s *string) (bool, error) {
+		fn := workflow.Not[string](func(ctx context.Context, s *workflow.Record[string, string]) (bool, error) {
 			return true, nil
 		})
 
-		key := workflow.MakeKey("w", "f", "r")
 		s := "example"
-		actual, err := fn(context.Background(), key, &s)
+		r := workflow.Record[string, string]{
+			Object: &s,
+		}
+		actual, err := fn(context.Background(), &r)
 		jtest.RequireNil(t, err)
 		require.False(t, actual)
 	})
 
 	t.Run("Not - flip false to true", func(t *testing.T) {
-		fn := workflow.Not[string](func(ctx context.Context, key workflow.Key, s *string) (bool, error) {
+		fn := workflow.Not[string](func(ctx context.Context, s *workflow.Record[string, string]) (bool, error) {
 			return false, nil
 		})
 
-		key := workflow.MakeKey("w", "f", "r")
 		s := "example"
-		actual, err := fn(context.Background(), key, &s)
+		r := workflow.Record[string, string]{
+			Object: &s,
+		}
+		actual, err := fn(context.Background(), &r)
 		jtest.RequireNil(t, err)
 		require.True(t, actual)
 	})
 
 	t.Run("Not - propagate error and do not flip result to true", func(t *testing.T) {
-		fn := workflow.Not[string](func(ctx context.Context, key workflow.Key, s *string) (bool, error) {
+		fn := workflow.Not[string](func(ctx context.Context, s *workflow.Record[string, string]) (bool, error) {
 			return false, errors.New("expected error")
 		})
 
-		key := workflow.MakeKey("w", "f", "r")
 		s := "example"
-		actual, err := fn(context.Background(), key, &s)
+		r := workflow.Record[string, string]{
+			Object: &s,
+		}
+		actual, err := fn(context.Background(), &r)
 		jtest.Require(t, err, errors.New("expected error"))
 		require.False(t, actual)
 	})
 }
 
 func TestWorkflow_ScheduleTrigger(t *testing.T) {
+	b := workflow.NewBuilder[MyType, string]("sync users")
+	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+		return true, nil
+	}, "Collected users")
+
+	b.AddStep("Collected users", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+		return true, nil
+	}, "Synced users")
+
 	now := time.Date(2023, time.April, 9, 8, 30, 0, 0, time.UTC)
 	clock := clock_testing.NewFakeClock(now)
-	store := memstore.New(memstore.WithClock(clock))
-	b := workflow.NewBuilder[MyType]("sync users")
-
-	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
-		return true, nil
-	}, "Collected users", workflow.WithStepPollingFrequency(time.Millisecond))
-
-	b.AddStep("Collected users", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
-		return true, nil
-	}, "Synced users", workflow.WithStepPollingFrequency(time.Millisecond))
-
+	recordStore := memrecordstore.New()
+	timeoutStore := memtimeoutstore.New()
 	wf := b.Build(
-		store,
-		memcursor.New(),
+		memstreamer.New(),
+		recordStore,
+		timeoutStore,
 		memrolescheduler.New(),
 		workflow.WithClock(clock),
 	)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
 		cancel()
@@ -381,9 +357,9 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond)
 
-	runID, err := store.LastRunID(ctx, "sync users", "andrew")
+	_, err := recordStore.Latest(ctx, "sync users", "andrew")
 	// Expect there to be no entries yet
-	jtest.Require(t, workflow.ErrRunIDNotFound, err)
+	jtest.Require(t, workflow.ErrRecordNotFound, err)
 
 	// Grab the time from the clock for expectation as to the time we expect the entry to have
 	expectedTimestamp := time.Date(2023, time.May, 1, 0, 0, 0, 0, time.UTC)
@@ -392,29 +368,11 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	// Allow scheduling to take place
 	time.Sleep(20 * time.Millisecond)
 
-	runID, err = store.LastRunID(ctx, "sync users", "andrew")
+	firstScheduled, err := recordStore.Latest(ctx, "sync users", "andrew")
 	jtest.RequireNil(t, err)
 
-	key := workflow.MakeKey("sync users", "andrew", runID)
-	latest, err := store.LookupLatest(ctx, key)
+	_, err = wf.Await(ctx, firstScheduled.ForeignID, firstScheduled.RunID, "Synced users")
 	jtest.RequireNil(t, err)
-
-	var mt MyType
-	serialised, err := workflow.Marshal(&mt)
-	jtest.RequireNil(t, err)
-
-	expected := workflow.Record{
-		ID:           3,
-		RunID:        runID,
-		WorkflowName: "sync users",
-		ForeignID:    "andrew",
-		Status:       "Synced users",
-		IsStart:      false,
-		IsEnd:        true,
-		Object:       serialised,
-		CreatedAt:    expectedTimestamp,
-	}
-	require.Equal(t, expected, *latest)
 
 	expectedTimestamp = time.Date(2023, time.June, 1, 0, 0, 0, 0, time.UTC)
 	clock.SetTime(expectedTimestamp)
@@ -422,41 +380,30 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	// Allow scheduling to take place
 	time.Sleep(20 * time.Millisecond)
 
-	runID, err = store.LastRunID(ctx, "sync users", "andrew")
+	secondScheduled, err := recordStore.Latest(ctx, "sync users", "andrew")
 	jtest.RequireNil(t, err)
 
-	key = workflow.MakeKey("sync users", "andrew", runID)
-	latest, err = store.LookupLatest(ctx, key)
-	jtest.RequireNil(t, err)
-
-	secondExpected := workflow.Record{
-		ID:           6,
-		RunID:        runID,
-		WorkflowName: "sync users",
-		ForeignID:    "andrew",
-		Status:       "Synced users",
-		IsStart:      false,
-		IsEnd:        true,
-		Object:       serialised,
-		CreatedAt:    expectedTimestamp,
-	}
-	require.Equal(t, secondExpected, *latest)
+	t.Log(firstScheduled.RunID, secondScheduled.RunID)
+	require.NotEqual(t, firstScheduled.RunID, secondScheduled.RunID)
 }
 
 func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
-	b := workflow.NewBuilder[MyType]("sync users")
+	b := workflow.NewBuilder[MyType, string]("sync users")
 
-	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
 		return true, nil
-	}, "Collected users", workflow.WithStepPollingFrequency(time.Millisecond))
+	}, "Collected users")
 
-	b.AddStep("Collected users", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
+	b.AddStep("Collected users", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
 		return true, nil
-	}, "Synced users", workflow.WithStepPollingFrequency(time.Millisecond))
+	}, "Synced users")
 
+	recordStore := memrecordstore.New()
+	timeoutStore := memtimeoutstore.New()
 	wf := b.Build(
-		memstore.New(),
-		memcursor.New(),
+		memstreamer.New(),
+		recordStore,
+		timeoutStore,
 		memrolescheduler.New(),
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -472,21 +419,24 @@ func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
 }
 
 func TestWorkflow_TestingRequire(t *testing.T) {
-	b := workflow.NewBuilder[MyType]("sync users")
+	b := workflow.NewBuilder[MyType, string]("sync users")
 
-	b.AddStep("Started", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
-		t.Email = "andrew@workflow.com"
+	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+		t.Object.Email = "andrew@workflow.com"
 		return true, nil
-	}, "Updated email", workflow.WithStepPollingFrequency(time.Millisecond))
+	}, "Updated email")
 
-	b.AddStep("Updated email", func(ctx context.Context, key workflow.Key, t *MyType) (bool, error) {
-		t.Cellphone = "+44 349 8594"
+	b.AddStep("Updated email", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+		t.Object.Cellphone = "+44 349 8594"
 		return true, nil
-	}, "Updated cellphone", workflow.WithStepPollingFrequency(time.Millisecond))
+	}, "Updated cellphone")
 
+	recordStore := memrecordstore.New()
+	timeoutStore := memtimeoutstore.New()
 	wf := b.Build(
-		memstore.New(),
-		memcursor.New(),
+		memstreamer.New(),
+		recordStore,
+		timeoutStore,
 		memrolescheduler.New(),
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -496,19 +446,20 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 
 	wf.Run(ctx)
 
-	_, err := wf.Trigger(ctx, "andrew", "Started")
+	foreignID := "andrew"
+	runID, err := wf.Trigger(ctx, "andrew", "Started")
 	jtest.RequireNil(t, err)
 
 	expected := MyType{
 		Email: "andrew@workflow.com",
 	}
-	workflow.Require(t, wf, "Updated email", expected)
+	workflow.Require(t, wf, "Updated email", foreignID, runID, expected)
 
 	expected = MyType{
 		Email:     "andrew@workflow.com",
 		Cellphone: "+44 349 8594",
 	}
-	workflow.Require(t, wf, "Updated cellphone", expected)
+	workflow.Require(t, wf, "Updated cellphone", foreignID, runID, expected)
 }
 
 func TestTimeTimerFunc(t *testing.T) {
@@ -517,12 +468,12 @@ func TestTimeTimerFunc(t *testing.T) {
 		Yang bool
 	}
 
-	b := workflow.NewBuilder[YinYang]("timer_func")
+	b := workflow.NewBuilder[YinYang, string]("timer_func")
 
 	launchDate := time.Date(1992, time.April, 9, 0, 0, 0, 0, time.UTC)
-	b.AddTimeout("Pending", workflow.TimeTimerFunc(launchDate), func(ctx context.Context, key workflow.Key, t *YinYang, now time.Time) (bool, error) {
-		t.Yin = true
-		t.Yang = true
+	b.AddTimeout("Pending", workflow.TimeTimerFunc[YinYang, string](launchDate), func(ctx context.Context, t *workflow.Record[YinYang, string], now time.Time) (bool, error) {
+		t.Object.Yin = true
+		t.Object.Yang = true
 		return true, nil
 	},
 		"Launched",
@@ -531,20 +482,22 @@ func TestTimeTimerFunc(t *testing.T) {
 	now := time.Date(1991, time.December, 25, 8, 30, 0, 0, time.UTC)
 	clock := clock_testing.NewFakeClock(now)
 
+	recordStore := memrecordstore.New()
+	timeoutStore := memtimeoutstore.New()
 	wf := b.Build(
-		memstore.New(),
-		memcursor.New(),
+		memstreamer.New(),
+		recordStore,
+		timeoutStore,
 		memrolescheduler.New(),
-		workflow.WithClock(clock),
 	)
 
 	ctx := context.Background()
 	wf.Run(ctx)
 
-	_, err := wf.Trigger(ctx, "Andrew Wormald", "Pending")
+	runID, err := wf.Trigger(ctx, "Andrew Wormald", "Pending")
 	jtest.RequireNil(t, err)
 
-	workflow.AwaitTimeoutInsert(t, wf, "Pending")
+	workflow.AwaitTimeoutInsert(t, wf, "Pending", "Andrew Wormald", runID)
 
 	clock.SetTime(launchDate)
 
@@ -552,5 +505,5 @@ func TestTimeTimerFunc(t *testing.T) {
 		Yin:  true,
 		Yang: true,
 	}
-	workflow.Require(t, wf, "Launched", expected)
+	workflow.Require(t, wf, "Launched", "Andrew Wormald", runID, expected)
 }

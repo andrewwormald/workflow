@@ -10,6 +10,7 @@ require (
 	github.com/luno/jettison v0.0.0-20230308151132-4c74d8b60212
 	github.com/luno/reflex v0.0.0-20230621143024-9062e4676733
 	github.com/robfig/cron/v3 v3.0.0
+	github.com/segmentio/kafka-go v0.4.43
 	github.com/stretchr/testify v1.8.3
 	google.golang.org/protobuf v1.31.0
 	k8s.io/utils v0.0.0-20230505201702-9f6742963106
@@ -21,7 +22,9 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/klauspost/compress v1.15.9 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
+	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_golang v1.15.0 // indirect
 	github.com/prometheus/client_model v0.3.0 // indirect

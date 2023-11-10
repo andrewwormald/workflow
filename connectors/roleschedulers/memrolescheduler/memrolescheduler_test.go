@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewwormald/workflow/memrolescheduler"
 	"github.com/luno/jettison/jtest"
 	"github.com/stretchr/testify/require"
+
+	"github.com/andrewwormald/workflow/connectors/roleschedulers/memrolescheduler"
 )
 
 func TestAwaitRoleContext(t *testing.T) {
