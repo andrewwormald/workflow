@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/luno/jettison/errors"
@@ -10,8 +9,8 @@ import (
 )
 
 type EventStreamerConstructor interface {
-	NewProducer(workflowName string, status string) Producer
-	NewConsumer(workflowName string, status string) Consumer
+	NewProducer(topic string) Producer
+	NewConsumer(topic string, name string) Consumer
 }
 
 // TODO: Add send meta data like stack traces
@@ -36,11 +35,19 @@ func update(ctx context.Context, streamFn EventStreamerConstructor, store Record
 		return err
 	}
 
-	return streamFn.NewProducer(wr.WorkflowName, wr.Status).Send(ctx, wr)
+	topic := Topic(wr.WorkflowName, wr.Status)
+	producer := streamFn.NewProducer(topic)
+	err = producer.Send(ctx, wr)
+	if err != nil {
+		return err
+	}
+
+	return producer.Close()
 }
 
-func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], p process[Type, Status], status Status) error {
-	stream := w.eventStreamerFn.NewConsumer(w.Name, string(status))
+func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], p process[Type, Status], status Status, role string) error {
+	topic := Topic(w.Name, string(status))
+	stream := w.eventStreamerFn.NewConsumer(topic, role)
 	defer stream.Close()
 
 	for {
@@ -59,6 +66,18 @@ func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Wo
 		}
 
 		if latest.Status != r.Status {
+			err = ack()
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		if latest.RunID != r.RunID {
+			err = ack()
+			if err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -85,7 +104,6 @@ func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Wo
 		}
 
 		if ok {
-			fmt.Println("Consumed with 👍", *r)
 			b, err := Marshal(&record.Object)
 			if err != nil {
 				return err
@@ -130,8 +148,9 @@ func wait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func awaitWorkflowStatusByForeignID[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, foreignID, runID string, pollFrequency time.Duration) (*Record[Type, Status], error) {
-	stream := w.eventStreamerFn.NewConsumer(w.Name, string(status))
+func awaitWorkflowStatusByForeignID[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, foreignID, runID string, role string, pollFrequency time.Duration) (*Record[Type, Status], error) {
+	topic := Topic(w.Name, string(status))
+	stream := w.eventStreamerFn.NewConsumer(topic, role)
 	defer stream.Close()
 
 	for {
@@ -140,44 +159,33 @@ func awaitWorkflowStatusByForeignID[Type any, Status ~string](ctx context.Contex
 		}
 
 		r, ack, err := stream.Recv(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		switch true {
+		// If the record doesn't match the status, foreignID, and runID then sleep and try again
+		case r.Status != string(status), r.ForeignID != foreignID, r.RunID != runID:
+			// Increment the offset / cursor to process new events
+			err = ack()
+			if err != nil {
+				return nil, err
+			}
+
+			continue
+		}
+
 		var t Type
 		err = Unmarshal(r.Object, &t)
 		if err != nil {
 			return nil, err
 		}
 
-		fmt.Println("New event for await", *r)
-
-		err = ack()
-		if err != nil {
-			return nil, err
-		}
-
-		if r.ForeignID != foreignID {
-			err := wait(ctx, pollFrequency)
-			if err != nil {
-				return nil, err
-			}
-
-			continue
-		}
-
-		if r.RunID != runID {
-			err := wait(ctx, pollFrequency)
-			if err != nil {
-				return nil, err
-			}
-
-			continue
-		}
-
-		record := Record[Type, Status]{
+		return &Record[Type, Status]{
 			WireRecord: *r,
 			Status:     Status(r.Status),
 			Object:     &t,
-		}
-
-		return &record, nil
+		}, ack()
 	}
 }
 

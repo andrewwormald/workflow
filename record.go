@@ -38,13 +38,32 @@ func (r *WireRecord) ProtoMarshal() ([]byte, error) {
 
 func ToProto(r *WireRecord) *workflowpb.Record {
 	return &workflowpb.Record{
-		RunId:        r.RunID,
 		WorkflowName: r.WorkflowName,
 		ForeignId:    r.ForeignID,
+		RunId:        r.RunID,
 		Status:       r.Status,
 		IsStart:      r.IsStart,
 		IsEnd:        r.IsEnd,
 		Object:       r.Object,
 		CreatedAt:    timestamppb.New(r.CreatedAt),
 	}
+}
+
+func UnmarshalRecord(b []byte) (*WireRecord, error) {
+	var wpb workflowpb.Record
+	err := proto.Unmarshal(b, &wpb)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to proto marshal entry")
+	}
+
+	return &WireRecord{
+		WorkflowName: wpb.WorkflowName,
+		ForeignID:    wpb.ForeignId,
+		RunID:        wpb.RunId,
+		Status:       wpb.Status,
+		IsStart:      wpb.IsStart,
+		IsEnd:        wpb.IsEnd,
+		Object:       wpb.Object,
+		CreatedAt:    wpb.CreatedAt.AsTime(),
+	}, nil
 }

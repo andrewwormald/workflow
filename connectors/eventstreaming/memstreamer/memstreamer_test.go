@@ -2,6 +2,7 @@ package memstreamer_test
 
 import (
 	"context"
+	connector "github.com/andrewwormald/workflow/connectors/testing"
 	"testing"
 	"time"
 
@@ -14,13 +15,10 @@ import (
 
 func TestMemSteamer(t *testing.T) {
 	stream := memstreamer.New()
-
 	workflowName := "example-workflow"
 	status := "Started"
 
-	s := stream.New(workflowName, status)
 	ctx := context.TODO()
-
 	eventRecords := []workflow.WireRecord{
 		{
 			WorkflowName: workflowName,
@@ -53,14 +51,24 @@ func TestMemSteamer(t *testing.T) {
 
 	for _, record := range eventRecords {
 		r := record
-		err := s.Send(ctx, &r)
+		topic := workflow.Topic(workflowName, status)
+		err := stream.NewProducer(topic).Send(ctx, &r)
 		jtest.RequireNil(t, err)
 	}
 
+	consumer := stream.NewConsumer(workflowName, status)
 	for _, expected := range eventRecords {
-		actual, err := s.Recv(ctx)
+		actual, ack, err := consumer.Recv(ctx)
 		jtest.RequireNil(t, err)
 
 		require.Equal(t, expected, *actual)
+
+		err = ack()
+		jtest.RequireNil(t, err)
 	}
+}
+
+func TestStreamer(t *testing.T) {
+	constructor := memstreamer.New()
+	connector.TestStreamer(t, constructor)
 }

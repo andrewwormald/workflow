@@ -5,17 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/andrewwormald/workflow"
-	"github.com/google/uuid"
 	"github.com/luno/jettison/errors"
-	"strings"
 	"time"
 
 	"github.com/segmentio/kafka-go"
 )
 
-func New() *StreamConstructor {
+func New(brokers []string) *StreamConstructor {
 	return &StreamConstructor{
-		brokers: []string{"localhost:9092"},
+		brokers: brokers,
 	}
 }
 
@@ -25,15 +23,7 @@ type StreamConstructor struct {
 	brokers []string
 }
 
-func formTopic(workflowName, status string) string {
-	workflowName = strings.ReplaceAll(workflowName, " ", "-")
-	status = strings.ReplaceAll(status, " ", "-")
-	topic := fmt.Sprintf("%v-%v", workflowName, status)
-	return topic
-}
-
-func (s StreamConstructor) NewProducer(workflowName string, status string) workflow.Producer {
-	topic := formTopic(workflowName, status)
+func (s StreamConstructor) NewProducer(topic string) workflow.Producer {
 	return &Producer{
 		Topic: topic,
 		Writer: &kafka.Writer{
@@ -41,30 +31,17 @@ func (s StreamConstructor) NewProducer(workflowName string, status string) workf
 			Topic:                  topic,
 			AllowAutoTopicCreation: true,
 		},
-		WriterTimeout: 0,
+		WriterTimeout: time.Second * 10,
 	}
 }
-
-func (s StreamConstructor) NewConsumer(workflowName string, status string) workflow.Consumer {
-	topic := formTopic(workflowName, status)
-	return &Consumer{
-		Topic: topic,
-		Reader: kafka.NewReader(kafka.ReaderConfig{
-			Brokers:     s.brokers,
-			GroupID:     uuid.New().String(),
-			Topic:       topic,
-			StartOffset: kafka.LastOffset,
-		}),
-	}
-}
-
-var _ workflow.EventStreamerConstructor = (*StreamConstructor)(nil)
 
 type Producer struct {
 	Topic         string
 	Writer        *kafka.Writer
 	WriterTimeout time.Duration
 }
+
+var _ workflow.Producer = (*Producer)(nil)
 
 func (p *Producer) Send(ctx context.Context, r *workflow.WireRecord) error {
 	for {
@@ -100,10 +77,22 @@ func (p *Producer) Close() error {
 	return p.Writer.Close()
 }
 
-var _ workflow.Producer = (*Producer)(nil)
+func (s StreamConstructor) NewConsumer(topic string, name string) workflow.Consumer {
+	return &Consumer{
+		topic: topic,
+		name:  name,
+		Reader: kafka.NewReader(kafka.ReaderConfig{
+			Brokers:        s.brokers,
+			GroupID:        name,
+			Topic:          topic,
+			ReadBackoffMax: time.Millisecond * 500,
+		}),
+	}
+}
 
 type Consumer struct {
-	Topic  string
+	topic  string
+	name   string
 	Reader *kafka.Reader
 }
 
@@ -112,8 +101,6 @@ func (c *Consumer) Recv(ctx context.Context) (*workflow.WireRecord, workflow.Ack
 	if err != nil {
 		return nil, nil, err
 	}
-
-	fmt.Println(m.Offset)
 
 	var r workflow.WireRecord
 	err = json.Unmarshal(m.Value, &r)

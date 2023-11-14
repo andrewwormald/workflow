@@ -82,6 +82,7 @@ func TestWorkflow(t *testing.T) {
 		timeoutStore,
 		memrolescheduler.New(),
 		workflow.WithClock(clock),
+		workflow.WithDebugMode(),
 	)
 
 	wf.Run(ctx)
@@ -447,7 +448,7 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 	wf.Run(ctx)
 
 	foreignID := "andrew"
-	runID, err := wf.Trigger(ctx, "andrew", "Started")
+	runID, err := wf.Trigger(ctx, foreignID, "Started")
 	jtest.RequireNil(t, err)
 
 	expected := MyType{

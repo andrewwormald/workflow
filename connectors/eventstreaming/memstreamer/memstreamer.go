@@ -20,25 +20,35 @@ type StreamConstructor struct {
 	stream *Stream
 }
 
-func (s StreamConstructor) New(workflowName string, status string) workflow.EventStreamer {
+func (s StreamConstructor) NewProducer(topic string) workflow.Producer {
 	s.stream.mu.Lock()
 	defer s.stream.mu.Unlock()
 
 	return &Stream{
-		log:          s.stream.log,
-		workflowName: workflowName,
-		status:       status,
+		log:   s.stream.log,
+		topic: topic,
+	}
+}
+
+func (s StreamConstructor) NewConsumer(topic string, name string) workflow.Consumer {
+	s.stream.mu.Lock()
+	defer s.stream.mu.Unlock()
+
+	return &Stream{
+		log:   s.stream.log,
+		topic: topic,
+		name:  name,
 	}
 }
 
 var _ workflow.EventStreamerConstructor = (*StreamConstructor)(nil)
 
 type Stream struct {
-	mu           sync.Mutex
-	log          *[]*workflow.WireRecord
-	offset       int
-	workflowName string
-	status       string
+	mu     sync.Mutex
+	log    *[]*workflow.WireRecord
+	offset int
+	topic  string
+	name   string
 }
 
 func (s *Stream) Send(ctx context.Context, r *workflow.WireRecord) error {
@@ -50,7 +60,7 @@ func (s *Stream) Send(ctx context.Context, r *workflow.WireRecord) error {
 	return nil
 }
 
-func (s *Stream) Recv(ctx context.Context) (*workflow.WireRecord, error) {
+func (s *Stream) Recv(ctx context.Context) (*workflow.WireRecord, workflow.Ack, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -64,20 +74,20 @@ func (s *Stream) Recv(ctx context.Context) (*workflow.WireRecord, error) {
 		}
 
 		r := log[s.offset]
-		s.offset++
 
-		if r.WorkflowName != s.workflowName {
-			continue
-		}
-
-		if r.Status != s.status {
+		t := workflow.Topic(r.WorkflowName, r.Status)
+		if s.topic != t {
+			s.offset += 1
 			continue
 		}
 
 		record = r
 	}
 
-	return record, nil
+	return record, func() error {
+		s.offset += 1
+		return nil
+	}, nil
 }
 
 func (s *Stream) Close() error {
@@ -89,4 +99,5 @@ func (s *Stream) Close() error {
 	return nil
 }
 
-var _ workflow.EventStreamer = (*Stream)(nil)
+var _ workflow.Producer = (*Stream)(nil)
+var _ workflow.Consumer = (*Stream)(nil)

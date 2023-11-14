@@ -154,7 +154,10 @@ func (w *Workflow[Type, Status]) ScheduleTrigger(ctx context.Context, foreignID 
 
 		nextRun := schedule.Next(lastRun)
 		err = waitUntil(ctx, w.clock, nextRun)
-		if err != nil {
+		if errors.Is(err, context.Canceled) {
+			cancel()
+			continue
+		} else if err != nil {
 			log.Error(ctx, errors.Wrap(err, "schedule trigger error - wait until", j.MKV{
 				"workflow_name": w.Name,
 				"now":           w.clock.Now(),
@@ -221,7 +224,8 @@ func (w *Workflow[Type, Status]) Await(ctx context.Context, foreignID, runID str
 		pollFrequency = opt.pollFrequency
 	}
 
-	return awaitWorkflowStatusByForeignID[Type, Status](ctx, w, status, foreignID, runID, pollFrequency)
+	role := makeRole("await", w.Name, string(status), foreignID, runID)
+	return awaitWorkflowStatusByForeignID[Type, Status](ctx, w, status, foreignID, runID, role, pollFrequency)
 }
 
 type awaitOpts struct {
@@ -277,8 +281,9 @@ func runner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Sta
 	role := makeRole(
 		w.Name,
 		string(currentStatus),
+		"to",
 		string(p.DestinationStatus),
-		"runner",
+		"consumer",
 	)
 
 	for {
@@ -306,7 +311,7 @@ func runner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Sta
 			return
 		}
 
-		err = runStepConsumerForever[Type, Status](ctx, w, p, currentStatus)
+		err = runStepConsumerForever[Type, Status](ctx, w, p, currentStatus, role)
 		if errors.Is(err, ErrStreamingClosed) {
 			if w.debugMode {
 				log.Info(ctx, "shutting down process - runner", j.MKV{
@@ -408,7 +413,10 @@ func timeoutAutoInserterRunner[Type any, Status ~string](ctx context.Context, w 
 				return false, nil
 			},
 			ParallelCount: 1,
-		}, status)
+		},
+			status,
+			role,
+		)
 		if errors.Is(err, ErrStreamingClosed) {
 			if w.debugMode {
 				log.Info(ctx, "shutting down process - timeout auto inserter runner", j.MKV{
@@ -433,7 +441,7 @@ func timeoutAutoInserterRunner[Type any, Status ~string](ctx context.Context, w 
 func makeRole(inputs ...string) string {
 	joined := strings.Join(inputs, "-")
 	lowered := strings.ToLower(joined)
-	filled := strings.Replace(lowered, " ", "-", -1)
+	filled := strings.Replace(lowered, " ", "_", -1)
 	return filled
 }
 
