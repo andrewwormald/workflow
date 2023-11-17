@@ -30,7 +30,7 @@ type WireRecord struct {
 func (r *WireRecord) ProtoMarshal() ([]byte, error) {
 	pb, err := proto.Marshal(ToProto(r))
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to proto marshal entry")
+		return nil, errors.Wrap(err, "failed to proto marshal record")
 	}
 
 	return pb, nil
@@ -53,7 +53,7 @@ func UnmarshalRecord(b []byte) (*WireRecord, error) {
 	var wpb workflowpb.Record
 	err := proto.Unmarshal(b, &wpb)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to proto marshal entry")
+		return nil, errors.Wrap(err, "failed to proto marshal record")
 	}
 
 	return &WireRecord{

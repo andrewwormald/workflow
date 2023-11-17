@@ -3,22 +3,20 @@ package reflex
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"github.com/andrewwormald/workflow"
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/reflex"
 	"github.com/luno/reflex/rsql"
 	"io"
-	"strings"
+	"strconv"
 	"time"
 )
 
-func New(writer, reader *sql.DB, table *rsql.EventsTable, cursorStore reflex.CursorStore, opts ...reflex.StreamOption) workflow.EventStreamerConstructor {
+func New(writer, reader *sql.DB, table *rsql.EventsTable, cursorStore reflex.CursorStore) workflow.EventStreamerConstructor {
 	return &constructor{
 		writer:      writer,
 		reader:      reader,
-		stream:      table.ToStream(reader, opts...),
 		eventsTable: table,
 		cursorStore: cursorStore,
 	}
@@ -46,14 +44,14 @@ type Producer struct {
 	eventsTable *rsql.EventsTable
 }
 
-func (p Producer) Send(ctx context.Context, r *workflow.WireRecord) error {
+func (p Producer) Send(ctx context.Context, e *workflow.Event) error {
 	tx, err := p.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	b, err := r.ProtoMarshal()
+	b, err := e.ProtoMarshal()
 	if err != nil {
 		return err
 	}
@@ -63,7 +61,7 @@ func (p Producer) Send(ctx context.Context, r *workflow.WireRecord) error {
 		return err
 	}
 
-	notify, err := p.eventsTable.InsertWithMetadata(ctx, tx, r.ForeignID, eventType, b)
+	notify, err := p.eventsTable.InsertWithMetadata(ctx, tx, e.ForeignID, eventType, b)
 	if err != nil {
 		return err
 	}
@@ -82,27 +80,43 @@ func (p Producer) Close() error {
 	return nil
 }
 
-func (c constructor) NewConsumer(topic string, name string) workflow.Consumer {
+func (c constructor) NewConsumer(topic string, name string, opts ...workflow.ConsumerOption) workflow.Consumer {
+	var copts workflow.ConsumerOptions
+	for _, opt := range opts {
+		opt(&copts)
+	}
+
+	pollFrequency := time.Millisecond * 50
+	if copts.PollFrequency.Nanoseconds() != 0 {
+		pollFrequency = copts.PollFrequency
+	}
+
+	var ropts []reflex.StreamOption
+	if copts.StreamFromLatest {
+		ropts = append(ropts, reflex.WithStreamFromHead())
+	}
+
+	table := c.eventsTable.Clone(rsql.WithEventsBackoff(pollFrequency))
 	return &Consumer{
-		topic:       topic,
-		name:        name,
-		cursor:      c.cursorStore,
-		reader:      c.reader,
-		stream:      c.stream,
-		pollBackOff: time.Millisecond * 200,
+		topic:   topic,
+		name:    name,
+		cursor:  c.cursorStore,
+		reader:  c.reader,
+		stream:  table.ToStream(c.reader, ropts...),
+		options: copts,
 	}
 }
 
 type Consumer struct {
-	topic       string
-	name        string
-	cursor      reflex.CursorStore
-	reader      *sql.DB
-	stream      reflex.StreamFunc
-	pollBackOff time.Duration
+	topic   string
+	name    string
+	cursor  reflex.CursorStore
+	reader  *sql.DB
+	stream  reflex.StreamFunc
+	options workflow.ConsumerOptions
 }
 
-func (c Consumer) Recv(ctx context.Context) (*workflow.WireRecord, workflow.Ack, error) {
+func (c Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, error) {
 	cursor, err := c.cursor.GetCursor(ctx, c.name)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to collect cursor")
@@ -114,7 +128,7 @@ func (c Consumer) Recv(ctx context.Context) (*workflow.WireRecord, workflow.Ack,
 	}
 
 	for ctx.Err() == nil {
-		event, err := cl.Recv()
+		reflexEvent, err := cl.Recv()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -128,18 +142,27 @@ func (c Consumer) Recv(ctx context.Context) (*workflow.WireRecord, workflow.Ack,
 			return nil, nil, err
 		}
 
-		if !reflex.IsType(et, event.Type) {
+		if !reflex.IsType(et, reflexEvent.Type) {
 			continue
 		}
 
-		wr, err := workflow.UnmarshalRecord(event.MetaData)
+		event, err := workflow.UnmarshalEvent(reflexEvent.MetaData)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		return wr, func() error {
+		event.ID = reflexEvent.IDInt()
+		event.CreatedAt = reflexEvent.Timestamp
+
+		// Filter out unwanted events
+		if skip := c.options.EventFilter(event); skip {
+			continue
+		}
+
+		return event, func() error {
 			// Increment cursor for consumer only if ack function is called.
-			if err := c.cursor.SetCursor(ctx, c.name, event.ID); err != nil {
+			eventID := strconv.FormatInt(event.ID, 10)
+			if err := c.cursor.SetCursor(ctx, c.name, eventID); err != nil {
 				return errors.Wrap(err, "failed to set cursor", j.MKV{
 					"consumer":  c.name,
 					"event_id":  event.ID,
@@ -163,25 +186,6 @@ func (c Consumer) Close() error {
 	}
 
 	return nil
-}
-
-func wait(ctx context.Context, d time.Duration) error {
-	if d == 0 {
-		return nil
-	}
-
-	t := time.NewTimer(d)
-	select {
-	case <-ctx.Done():
-		fmt.Println("context was cancelled")
-		return errors.Wrap(workflow.ErrStreamingClosed, ctx.Err().Error())
-	case <-t.C:
-		return nil
-	}
-}
-
-func cursorKey(workflowName string, status string) string {
-	return strings.Join([]string{workflowName, status}, "-")
 }
 
 var _ workflow.EventStreamerConstructor = (*constructor)(nil)

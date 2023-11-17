@@ -128,7 +128,7 @@ func (w *Workflow[Type, Status]) ScheduleTrigger(ctx context.Context, foreignID 
 	for {
 		ctx, cancel, err := w.scheduler.Await(ctx, role)
 		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
+			log.Error(ctx, errors.Wrap(err, "timeout auto inserter consumer error"))
 		}
 
 		latestEntry, err := w.recordStore.Latest(ctx, w.Name, foreignID)
@@ -224,7 +224,7 @@ func (w *Workflow[Type, Status]) Await(ctx context.Context, foreignID, runID str
 		pollFrequency = opt.pollFrequency
 	}
 
-	role := makeRole("await", w.Name, string(status), foreignID, runID)
+	role := makeRole("await", w.Name, string(status), foreignID)
 	return awaitWorkflowStatusByForeignID[Type, Status](ctx, w, status, foreignID, runID, role, pollFrequency)
 }
 
@@ -258,20 +258,28 @@ func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 
 		for currentStatus, processes := range w.processes {
 			for _, p := range processes {
-				go runner(ctx, w, currentStatus, p)
+				if p.ParallelCount < 2 {
+					// Launch all processes in runners
+					go consumer(ctx, w, currentStatus, p, 1, 1)
+				} else {
+					// Run as sharded parallel consumers
+					for i := 1; i <= p.ParallelCount; i++ {
+						go consumer(ctx, w, currentStatus, p, i, p.ParallelCount)
+					}
+				}
 			}
 		}
 
 		for status, timeouts := range w.timeouts {
-			go timeoutRunner(ctx, w, status, timeouts)
-			go timeoutAutoInserterRunner(ctx, w, status, timeouts)
+			go timeoutPoller(ctx, w, status, timeouts)
+			go timeoutAutoInserterConsumer(ctx, w, status, timeouts)
 		}
 	})
 }
 
-func runner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], currentStatus Status, p process[Type, Status]) {
+func consumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], currentStatus Status, p process[Type, Status], shard, totalShards int) {
 	if w.debugMode {
-		log.Info(ctx, "launched runner", j.MKV{
+		log.Info(ctx, "launched consumer", j.MKV{
 			"workflow_name": w.Name,
 			"from":          currentStatus,
 			"to":            p.DestinationStatus,
@@ -284,16 +292,19 @@ func runner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Sta
 		"to",
 		string(p.DestinationStatus),
 		"consumer",
+		fmt.Sprintf("%v", shard),
+		"of",
+		fmt.Sprintf("%v", totalShards),
 	)
 
 	for {
 		ctx, cancel, err := w.scheduler.Await(ctx, role)
 		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "runner error"))
+			log.Error(ctx, errors.Wrap(err, "consumer error"))
 		}
 
 		if w.debugMode {
-			log.Info(ctx, "runner obtained role", j.MKV{
+			log.Info(ctx, "consumer obtained role", j.MKV{
 				"role": role,
 			})
 		}
@@ -301,34 +312,36 @@ func runner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Sta
 		if ctx.Err() != nil {
 			// Gracefully exit when context has been cancelled
 			if w.debugMode {
-				log.Info(ctx, "shutting down process - runner", j.MKV{
+				log.Info(ctx, "shutting down process - consumer", j.MKV{
 					"workflow_name":      w.Name,
 					"current_status":     currentStatus,
 					"destination_status": p.DestinationStatus,
+					"shard":              shard,
+					"total_shards":       totalShards,
 					"role":               role,
 				})
 			}
 			return
 		}
 
-		err = runStepConsumerForever[Type, Status](ctx, w, p, currentStatus, role)
-		if errors.Is(err, ErrStreamingClosed) {
+		err = runStepConsumerForever[Type, Status](ctx, w, p, currentStatus, role, shard, totalShards)
+		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
 			if w.debugMode {
-				log.Info(ctx, "shutting down process - runner", j.MKV{
+				log.Info(ctx, "shutting down process - consumer", j.MKV{
 					"workflow_name":      w.Name,
 					"current_status":     currentStatus,
 					"destination_status": p.DestinationStatus,
 				})
 			}
 		} else if err != nil {
-			log.Error(ctx, errors.Wrap(err, "runner error"))
+			log.Error(ctx, errors.Wrap(err, "consumer error"))
 		}
 
 		select {
 		case <-ctx.Done():
 			cancel()
 			if w.debugMode {
-				log.Info(ctx, "shutting down process - runner", j.MKV{
+				log.Info(ctx, "shutting down process - consumer", j.MKV{
 					"workflow_name":      w.Name,
 					"current_status":     currentStatus,
 					"destination_status": p.DestinationStatus,
@@ -341,25 +354,28 @@ func runner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Sta
 	}
 }
 
-func timeoutRunner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
+func timeoutPoller[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
 	if w.debugMode {
-		log.Info(ctx, "launched timeout runner", j.MKV{
+		log.Info(ctx, "launched timeout consumer", j.MKV{
 			"workflow_name": w.Name,
 			"for":           status,
 		})
 	}
 
-	role := makeRole(w.Name, string(status), "timeout-runner")
+	role := makeRole(w.Name, string(status), "timeout-consumer")
 
 	for {
 		ctx, cancel, err := w.scheduler.Await(ctx, role)
 		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
+			log.Error(ctx, errors.Wrap(err, "timeout auto inserter consumer error"))
 		}
 
 		err = pollTimeouts(ctx, w, status, timeouts)
-		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout runner error"))
+		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
+			cancel()
+			return
+		} else if err != nil {
+			log.Error(ctx, errors.Wrap(err, "timeout consumer error"))
 		}
 
 		select {
@@ -372,60 +388,64 @@ func timeoutRunner[Type any, Status ~string](ctx context.Context, w *Workflow[Ty
 	}
 }
 
-func timeoutAutoInserterRunner[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
+func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
 	if w.debugMode {
-		log.Info(ctx, "launched timeout auto inserter runner", j.MKV{
+		log.Info(ctx, "launched timeout auto inserter consumer", j.MKV{
 			"workflow_name": w.Name,
 			"for":           status,
 		})
 	}
 
-	role := makeRole(w.Name, string(status), "timeout-auto-inserter-runner")
+	role := makeRole(w.Name, string(status), "timeout-auto-inserter-consumer")
 
 	for {
 		ctx, cancel, err := w.scheduler.Await(ctx, role)
 		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
+			log.Error(ctx, errors.Wrap(err, "timeout auto inserter consumer error"))
+		}
+
+		cunsumerFunc := func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
+			for _, config := range timeouts.Transitions {
+				ok, expireAt, err := config.TimerFunc(ctx, r, w.clock.Now())
+				if err != nil {
+					return false, err
+				}
+
+				if !ok {
+					// Ignore and evaluate the next
+					continue
+				}
+
+				err = w.timeoutStore.Create(ctx, r.WorkflowName, r.ForeignID, r.RunID, string(status), expireAt)
+				if err != nil {
+					return false, err
+				}
+			}
+
+			// Never update state even when successful
+			return false, nil
 		}
 
 		err = runStepConsumerForever(ctx, w, process[Type, Status]{
 			PollingFrequency: timeouts.PollingFrequency,
 			ErrBackOff:       timeouts.ErrBackOff,
-			Consumer: func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
-				for _, config := range timeouts.Transitions {
-					ok, expireAt, err := config.TimerFunc(ctx, r, w.clock.Now())
-					if err != nil {
-						return false, err
-					}
-
-					if !ok {
-						// Ignore and evaluate the next
-						continue
-					}
-
-					err = w.timeoutStore.Create(ctx, r.WorkflowName, r.ForeignID, r.RunID, string(status), expireAt)
-					if err != nil {
-						return false, err
-					}
-				}
-
-				// Never update state even when successful
-				return false, nil
-			},
-			ParallelCount: 1,
+			Consumer:         cunsumerFunc,
+			ParallelCount:    1,
 		},
 			status,
 			role,
+			1,
+			1,
 		)
-		if errors.Is(err, ErrStreamingClosed) {
+		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
 			if w.debugMode {
-				log.Info(ctx, "shutting down process - timeout auto inserter runner", j.MKV{
+				log.Info(ctx, "shutting down process - timeout auto inserter consumer", j.MKV{
 					"workflow_name": w.Name,
 					"status":        status,
 				})
 			}
 		} else if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout auto inserter runner error"))
+			log.Error(ctx, errors.Wrap(err, "timeout auto inserter consumer error"))
 		}
 
 		select {
@@ -450,7 +470,7 @@ type process[Type any, Status ~string] struct {
 	ErrBackOff        time.Duration
 	DestinationStatus Status
 	Consumer          ConsumerFunc[Type, Status]
-	ParallelCount     int64
+	ParallelCount     int
 }
 
 type callback[Type any, Status ~string] struct {

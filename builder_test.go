@@ -44,7 +44,7 @@ func TestWithParallelCount(t *testing.T) {
 	b.AddStep("Start", nil, "Middle", WithParallelCount(100))
 	wf := b.Build(nil, nil, nil, nil)
 
-	require.Equal(t, int64(100), wf.processes["Start"][0].ParallelCount)
+	require.Equal(t, int(100), wf.processes["Start"][0].ParallelCount)
 }
 
 func TestWithClock(t *testing.T) {

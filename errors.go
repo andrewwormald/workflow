@@ -3,7 +3,7 @@ package workflow
 import "github.com/luno/jettison/errors"
 
 var (
-	ErrStreamingClosed             = errors.New("streaming closed")
+	ErrWorkflowShutdown            = errors.New("workflow has been shutdown")
 	ErrCursorNotFound              = errors.New("cursor not found")
 	ErrRecordNotFound              = errors.New("record not found")
 	ErrTimeoutNotFound             = errors.New("timeout not found")

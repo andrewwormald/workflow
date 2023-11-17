@@ -43,7 +43,7 @@ func AwaitTimeoutInsert[Type any, Status ~string](t *testing.T, w *Workflow[Type
 	time.Sleep(pf * 2)
 
 	ctx := context.TODO()
-	_, err := w.Await(ctx, foreignID, runID, status, WithPollingFrequency(pf*2))
+	_, err := w.Await(ctx, foreignID, runID, status, WithPollingFrequency(pf))
 	jtest.RequireNil(t, err)
 }
 

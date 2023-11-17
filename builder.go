@@ -40,6 +40,11 @@ func (b *Builder[Type, Status]) AddStep(from Status, c ConsumerFunc[Type, Status
 		p.ParallelCount = so.parallelCount
 	}
 
+	p.PollingFrequency = b.workflow.defaultPollingFrequency
+	if so.pollingFrequency.Nanoseconds() != 0 {
+		p.PollingFrequency = so.pollingFrequency
+	}
+
 	p.ErrBackOff = b.workflow.defaultErrBackOff
 	if so.errBackOff.Nanoseconds() != 0 {
 		p.ErrBackOff = so.errBackOff
@@ -51,15 +56,22 @@ func (b *Builder[Type, Status]) AddStep(from Status, c ConsumerFunc[Type, Status
 }
 
 type stepOptions struct {
-	parallelCount int64
-	errBackOff    time.Duration
+	parallelCount    int
+	pollingFrequency time.Duration
+	errBackOff       time.Duration
 }
 
 type StepOption func(so *stepOptions)
 
-func WithParallelCount(instances int64) StepOption {
+func WithParallelCount(instances int) StepOption {
 	return func(so *stepOptions) {
 		so.parallelCount = instances
+	}
+}
+
+func WithStepPollingFrequency(d time.Duration) StepOption {
+	return func(so *stepOptions) {
+		so.pollingFrequency = d
 	}
 }
 
