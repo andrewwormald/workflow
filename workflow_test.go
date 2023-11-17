@@ -384,7 +384,6 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	secondScheduled, err := recordStore.Latest(ctx, "sync users", "andrew")
 	jtest.RequireNil(t, err)
 
-	t.Log(firstScheduled.RunID, secondScheduled.RunID)
 	require.NotEqual(t, firstScheduled.RunID, secondScheduled.RunID)
 }
 
@@ -492,7 +491,10 @@ func TestTimeTimerFunc(t *testing.T) {
 		memrolescheduler.New(),
 	)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
 	wf.Run(ctx)
 
 	runID, err := wf.Trigger(ctx, "Andrew Wormald", "Pending")

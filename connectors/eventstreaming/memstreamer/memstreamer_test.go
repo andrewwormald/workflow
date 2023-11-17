@@ -50,15 +50,26 @@ func TestMemSteamer(t *testing.T) {
 	}
 
 	for _, record := range eventRecords {
-		r := record
+		body, err := record.ProtoMarshal()
+		jtest.RequireNil(t, err)
+
+		e := workflow.Event{
+			ForeignID: record.ForeignID,
+			Body:      body,
+			Headers:   make(map[string]string),
+		}
 		topic := workflow.Topic(workflowName, status)
-		err := stream.NewProducer(topic).Send(ctx, &r)
+		err = stream.NewProducer(topic).Send(ctx, &e)
 		jtest.RequireNil(t, err)
 	}
 
-	consumer := stream.NewConsumer(workflowName, status)
+	topic := workflow.Topic(workflowName, status)
+	consumer := stream.NewConsumer(topic, status)
 	for _, expected := range eventRecords {
-		actual, ack, err := consumer.Recv(ctx)
+		event, ack, err := consumer.Recv(ctx)
+		jtest.RequireNil(t, err)
+
+		actual, err := workflow.UnmarshalRecord(event.Body)
 		jtest.RequireNil(t, err)
 
 		require.Equal(t, expected, *actual)

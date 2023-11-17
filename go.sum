@@ -67,8 +67,12 @@ github.com/luno/jettison v0.0.0-20190815135910-8324430a089d/go.mod h1:tOyVRFDlkZ
 github.com/luno/jettison v0.0.0-20210218093327-95083f929b49/go.mod h1:IVntidW2Z2luwfdIpwgvUZSwnRk82RRPfoj0h2P7W+c=
 github.com/luno/jettison v0.0.0-20230308151132-4c74d8b60212 h1:jDGNTRL9IyXnETj7jrDPcA189n1B4tN9uhKJwwuUiFk=
 github.com/luno/jettison v0.0.0-20230308151132-4c74d8b60212/go.mod h1:SSzd59GBShNn8lwwIlvFubN8ZV8j+Xqnw/6vvQkq3BA=
+github.com/luno/jettison v0.0.0-20230912135954-09d6084f5df9 h1:ykQ0/3gmOFypz1tNTyisrEM51rW7bx/UCGqEqrm/VyM=
+github.com/luno/jettison v0.0.0-20230912135954-09d6084f5df9/go.mod h1:Fc8KRfQEydIud0rjBHUNxUyyEKSidxP0kOlg4Dwn3JA=
 github.com/luno/reflex v0.0.0-20230621143024-9062e4676733 h1:uxZD7nHlv+gtZO5TMH4fwLAoWZrBbgl2EM19Bl4O6+M=
 github.com/luno/reflex v0.0.0-20230621143024-9062e4676733/go.mod h1:RZUgiDIxfuOIwVMSZuRzGJ2B3A4NklLSytx0PwuAwkE=
+github.com/luno/reflex v0.0.0-20231116123206-2371e7c89a55 h1:f8hRC7hO/J6lYD3u4TouYyB5IToCBeDgBApgqoZOTuI=
+github.com/luno/reflex v0.0.0-20231116123206-2371e7c89a55/go.mod h1:kjxlmaySEhtVSMVQ2eEmXOq/izGRyCrbELbpDn2eJMo=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/matttproud/golang_protobuf_extensions v1.0.4 h1:mmDVorXM7PCGKw94cs5zkfA9PSy5pEvNWRP0ET0TIVo=
 github.com/matttproud/golang_protobuf_extensions v1.0.4/go.mod h1:BSXmuO+STAnVfrANrmjBb36TMTDstsz7MSK+HVaYKv4=

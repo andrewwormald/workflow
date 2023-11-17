@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/andrewwormald/workflow"
 	"github.com/luno/jettison/errors"
@@ -30,6 +29,7 @@ func (s StreamConstructor) NewProducer(topic string) workflow.Producer {
 			Addr:                   kafka.TCP(s.brokers...),
 			Topic:                  topic,
 			AllowAutoTopicCreation: true,
+			RequiredAcks:           kafka.RequireOne,
 		},
 		WriterTimeout: time.Second * 10,
 	}
@@ -43,20 +43,29 @@ type Producer struct {
 
 var _ workflow.Producer = (*Producer)(nil)
 
-func (p *Producer) Send(ctx context.Context, r *workflow.WireRecord) error {
-	for {
+func (p *Producer) Send(ctx context.Context, e *workflow.Event) error {
+	for ctx.Err() == nil {
 		ctx, cancel := context.WithTimeout(ctx, p.WriterTimeout)
 		defer cancel()
 
-		msgData, err := json.Marshal(r)
+		msgData, err := e.ProtoMarshal()
 		if err != nil {
 			return err
 		}
 
-		key := fmt.Sprintf("%v-%v-%v", r.WorkflowName, r.ForeignID, r.RunID)
+		var headers []kafka.Header
+		for key, value := range e.Headers {
+			headers = append(headers, kafka.Header{
+				Key:   key,
+				Value: []byte(value),
+			})
+		}
+
+		key := fmt.Sprintf("%v", e.ForeignID)
 		msg := kafka.Message{
-			Key:   []byte(key),
-			Value: msgData,
+			Key:     []byte(key),
+			Value:   msgData,
+			Headers: headers,
 		}
 
 		err = p.Writer.WriteMessages(ctx, msg)
@@ -70,54 +79,89 @@ func (p *Producer) Send(ctx context.Context, r *workflow.WireRecord) error {
 		break
 	}
 
-	return nil
+	return ctx.Err()
 }
 
 func (p *Producer) Close() error {
 	return p.Writer.Close()
 }
 
-func (s StreamConstructor) NewConsumer(topic string, name string) workflow.Consumer {
+func (s StreamConstructor) NewConsumer(topic string, name string, opts ...workflow.ConsumerOption) workflow.Consumer {
+	var copts workflow.ConsumerOptions
+	for _, opt := range opts {
+		opt(&copts)
+	}
+
+	startOffset := kafka.FirstOffset
+	if copts.StreamFromLatest {
+		startOffset = kafka.LastOffset
+	}
+
+	kafkaReader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:        s.brokers,
+		GroupID:        name,
+		Topic:          topic,
+		ReadBackoffMin: copts.PollFrequency,
+		ReadBackoffMax: copts.PollFrequency,
+		StartOffset:    startOffset,
+		QueueCapacity:  1000,
+		MinBytes:       10,  // 10B
+		MaxBytes:       1e9, // 9MB
+		MaxWait:        time.Second,
+	})
+
 	return &Consumer{
-		topic: topic,
-		name:  name,
-		Reader: kafka.NewReader(kafka.ReaderConfig{
-			Brokers:        s.brokers,
-			GroupID:        name,
-			Topic:          topic,
-			ReadBackoffMax: time.Millisecond * 500,
-		}),
+		topic:   topic,
+		name:    name,
+		reader:  kafkaReader,
+		options: copts,
 	}
 }
 
 type Consumer struct {
-	topic  string
-	name   string
-	Reader *kafka.Reader
+	topic   string
+	name    string
+	reader  *kafka.Reader
+	options workflow.ConsumerOptions
 }
 
-func (c *Consumer) Recv(ctx context.Context) (*workflow.WireRecord, workflow.Ack, error) {
-	m, err := c.Reader.ReadMessage(ctx)
-	if err != nil {
-		return nil, nil, err
+func (c *Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, error) {
+	var commit []kafka.Message
+	for ctx.Err() == nil {
+		m, err := c.reader.FetchMessage(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Append the message to the commit slice to ensure we send all messages that have been processed
+		commit = append(commit, m)
+
+		e, err := workflow.UnmarshalEvent(m.Value)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		e.ID = m.Offset
+		e.CreatedAt = m.Time
+		for _, header := range m.Headers {
+			e.Headers[header.Key] = string(header.Value)
+		}
+
+		if skip := c.options.EventFilter(e); skip {
+			continue
+		}
+
+		return e, func() error {
+				return c.reader.CommitMessages(ctx, commit...)
+			},
+			nil
 	}
 
-	var r workflow.WireRecord
-	err = json.Unmarshal(m.Value, &r)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return &r,
-		func() error {
-			// Leave the committing of the message up to the workflow framework.
-			return nil
-		},
-		nil
+	return nil, nil, ctx.Err()
 }
 
 func (c *Consumer) Close() error {
-	return c.Reader.Close()
+	return c.reader.Close()
 }
 
 var _ workflow.Consumer = (*Consumer)(nil)

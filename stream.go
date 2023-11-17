@@ -10,34 +10,29 @@ import (
 
 type EventStreamerConstructor interface {
 	NewProducer(topic string) Producer
-	NewConsumer(topic string, name string) Consumer
+	NewConsumer(topic string, name string, opts ...ConsumerOption) Consumer
 }
-
-// TODO: Add send meta data like stack traces
-type Producer interface {
-	Send(ctx context.Context, r *WireRecord) error
-	Close() error
-}
-
-type Consumer interface {
-	Recv(ctx context.Context) (*WireRecord, Ack, error)
-	Close() error
-}
-
-// Ack is used for the event streamer to update it's cursor of what messages have
-// been consumed. If Ack is not called then the event streamer, depending on implementation,
-// will likely not keep track of which records / events have been consumed.
-type Ack func() error
 
 func update(ctx context.Context, streamFn EventStreamerConstructor, store RecordStore, wr *WireRecord) error {
-	err := store.Store(ctx, wr)
+	body, err := wr.ProtoMarshal()
+	if err != nil {
+		return err
+	}
+
+	e := Event{
+		ForeignID: wr.ForeignID,
+		Body:      body,
+		Headers:   make(map[string]string),
+	}
+
+	err = store.Store(ctx, wr)
 	if err != nil {
 		return err
 	}
 
 	topic := Topic(wr.WorkflowName, wr.Status)
 	producer := streamFn.NewProducer(topic)
-	err = producer.Send(ctx, wr)
+	err = producer.Send(ctx, &e)
 	if err != nil {
 		return err
 	}
@@ -45,17 +40,35 @@ func update(ctx context.Context, streamFn EventStreamerConstructor, store Record
 	return producer.Close()
 }
 
-func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], p process[Type, Status], status Status, role string) error {
+func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], p process[Type, Status], status Status, role string, shard, totalShards int) error {
+	pollFrequency := w.defaultPollingFrequency
+	if p.PollingFrequency.Nanoseconds() != 0 {
+		pollFrequency = p.PollingFrequency
+	}
+
 	topic := Topic(w.Name, string(status))
-	stream := w.eventStreamerFn.NewConsumer(topic, role)
+	stream := w.eventStreamerFn.NewConsumer(
+		topic,
+		role,
+		WithConsumerPollFrequency(pollFrequency),
+		WithEventFilter(
+			shardFilter(shard, totalShards),
+		),
+	)
+
 	defer stream.Close()
 
 	for {
 		if ctx.Err() != nil {
-			return errors.Wrap(ErrStreamingClosed, "")
+			return errors.Wrap(ErrWorkflowShutdown, "")
 		}
 
-		r, ack, err := stream.Recv(ctx)
+		e, ack, err := stream.Recv(ctx)
+		if err != nil {
+			return err
+		}
+
+		r, err := UnmarshalRecord(e.Body)
 		if err != nil {
 			return err
 		}
@@ -134,6 +147,16 @@ func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Wo
 	}
 }
 
+func shardFilter(shard, totalShards int) EventFilter {
+	return func(e *Event) bool {
+		if totalShards > 1 {
+			return e.ID%int64(totalShards) == int64(shard)
+		}
+
+		return false
+	}
+}
+
 func wait(ctx context.Context, d time.Duration) error {
 	if d == 0 {
 		return nil
@@ -142,7 +165,7 @@ func wait(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	select {
 	case <-ctx.Done():
-		return errors.Wrap(ErrStreamingClosed, ctx.Err().Error())
+		return errors.Wrap(ErrWorkflowShutdown, ctx.Err().Error())
 	case <-t.C:
 		return nil
 	}
@@ -150,15 +173,27 @@ func wait(ctx context.Context, d time.Duration) error {
 
 func awaitWorkflowStatusByForeignID[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, foreignID, runID string, role string, pollFrequency time.Duration) (*Record[Type, Status], error) {
 	topic := Topic(w.Name, string(status))
-	stream := w.eventStreamerFn.NewConsumer(topic, role)
+	stream := w.eventStreamerFn.NewConsumer(
+		topic,
+		role,
+		WithConsumerPollFrequency(pollFrequency),
+		WithEventFilter(func(e *Event) bool {
+			return e.ForeignID != foreignID
+		}),
+	)
 	defer stream.Close()
 
 	for {
 		if ctx.Err() != nil {
-			return nil, errors.Wrap(ErrStreamingClosed, "")
+			return nil, errors.Wrap(ErrWorkflowShutdown, "")
 		}
 
-		r, ack, err := stream.Recv(ctx)
+		e, ack, err := stream.Recv(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		r, err := UnmarshalRecord(e.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +228,7 @@ func awaitWorkflowStatusByForeignID[Type any, Status ~string](ctx context.Contex
 func pollTimeouts[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) error {
 	for {
 		if ctx.Err() != nil {
-			return errors.Wrap(ErrStreamingClosed, "")
+			return errors.Wrap(ErrWorkflowShutdown, "")
 		}
 
 		expiredTimeouts, err := w.timeoutStore.ListValid(ctx, w.Name, string(status), w.clock.Now())
@@ -264,7 +299,6 @@ func pollTimeouts[Type any, Status ~string](ctx context.Context, w *Workflow[Typ
 			}
 		}
 
-		// Use the fastest polling frequency to sleep and try again if there are no timeouts available
 		err = wait(ctx, timeouts.PollingFrequency)
 		if err != nil {
 			return err

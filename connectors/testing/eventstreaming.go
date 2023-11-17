@@ -2,7 +2,6 @@ package testing
 
 import (
 	"context"
-	"fmt"
 	clock_testing "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
@@ -33,10 +32,28 @@ type User struct {
 }
 
 func TestStreamer(t *testing.T, constructor workflow.EventStreamerConstructor) {
-	b := workflow.NewBuilder[User, SyncStatus]("sync users")
-	b.AddStep(SyncStatusStarted, setEmail(), SyncStatusEmailSet)
-	b.AddTimeout(SyncStatusEmailSet, CoolDownTimerFunc(), CoolDownTimeout(), SyncStatusRegulationTimeout)
-	b.AddStep(SyncStatusRegulationTimeout, generateUserID(), SyncStatusCompleted)
+	b := workflow.NewBuilder[User, SyncStatus]("sync user 2")
+	b.AddStep(
+		SyncStatusStarted,
+		setEmail(),
+		SyncStatusEmailSet,
+		workflow.WithStepPollingFrequency(time.Millisecond*200),
+		workflow.WithParallelCount(5),
+	)
+	b.AddTimeout(
+		SyncStatusEmailSet,
+		CoolDownTimerFunc(),
+		CoolDownTimeout(),
+		SyncStatusRegulationTimeout,
+		workflow.WithTimeoutPollingFrequency(time.Millisecond*200),
+	)
+	b.AddStep(
+		SyncStatusRegulationTimeout,
+		generateUserID(),
+		SyncStatusCompleted,
+		workflow.WithStepPollingFrequency(time.Millisecond*200),
+		workflow.WithParallelCount(5),
+	)
 
 	now := time.Date(2023, time.April, 9, 8, 30, 0, 0, time.UTC)
 	clock := clock_testing.NewFakeClock(now)
@@ -49,7 +66,10 @@ func TestStreamer(t *testing.T, constructor workflow.EventStreamerConstructor) {
 		workflow.WithClock(clock),
 	)
 
-	ctx := context.TODO()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+	})
 	wf.Run(ctx)
 
 	foreignID := "1"
@@ -74,15 +94,12 @@ func TestStreamer(t *testing.T, constructor workflow.EventStreamerConstructor) {
 func setEmail() func(ctx context.Context, t *workflow.Record[User, SyncStatus]) (bool, error) {
 	return func(ctx context.Context, t *workflow.Record[User, SyncStatus]) (bool, error) {
 		t.Object.Email = "andrew@workflow.com"
-		fmt.Println("Set email")
 		return true, nil
 	}
 }
 
 func CoolDownTimerFunc() func(ctx context.Context, r *workflow.Record[User, SyncStatus], now time.Time) (bool, time.Time, error) {
 	return func(ctx context.Context, r *workflow.Record[User, SyncStatus], now time.Time) (bool, time.Time, error) {
-		fmt.Println("Cool down decider executed")
-
 		// Place a 1-hour cool down period for Great Britain users
 		if r.Object.CountryCode == "GB" {
 			return true, now.Add(time.Hour), nil
@@ -96,7 +113,6 @@ func CoolDownTimerFunc() func(ctx context.Context, r *workflow.Record[User, Sync
 func CoolDownTimeout() func(ctx context.Context, r *workflow.Record[User, SyncStatus], now time.Time) (bool, error) {
 	return func(ctx context.Context, r *workflow.Record[User, SyncStatus], now time.Time) (bool, error) {
 		isAndrew := r.Object.Email == "andrew@workflow.com"
-		fmt.Println("Cool down timeout expired")
 		return isAndrew, nil
 	}
 }
@@ -104,7 +120,6 @@ func CoolDownTimeout() func(ctx context.Context, r *workflow.Record[User, SyncSt
 func generateUserID() func(ctx context.Context, t *workflow.Record[User, SyncStatus]) (bool, error) {
 	return func(ctx context.Context, t *workflow.Record[User, SyncStatus]) (bool, error) {
 		t.Object.UID = uuid.New().String()
-		fmt.Println("Generated user ID")
 		return true, nil
 	}
 }
