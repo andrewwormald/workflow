@@ -28,7 +28,7 @@ func TestWithStepErrBackOff(t *testing.T) {
 	b.AddStep("Start", nil, "Middle", WithStepErrBackOff(time.Minute))
 	wf := b.Build(nil, nil, nil, nil)
 
-	require.Equal(t, time.Minute, wf.processes["Start"][0].ErrBackOff)
+	require.Equal(t, time.Minute, wf.consumers["Start"][0].ErrBackOff)
 }
 
 func TestStepDestinationStatus(t *testing.T) {
@@ -36,7 +36,7 @@ func TestStepDestinationStatus(t *testing.T) {
 	b.AddStep("Start", nil, "Middle")
 	wf := b.Build(nil, nil, nil, nil)
 
-	require.Equal(t, "Middle", wf.processes["Start"][0].DestinationStatus)
+	require.Equal(t, "Middle", wf.consumers["Start"][0].DestinationStatus)
 }
 
 func TestWithParallelCount(t *testing.T) {
@@ -44,7 +44,7 @@ func TestWithParallelCount(t *testing.T) {
 	b.AddStep("Start", nil, "Middle", WithParallelCount(100))
 	wf := b.Build(nil, nil, nil, nil)
 
-	require.Equal(t, int(100), wf.processes["Start"][0].ParallelCount)
+	require.Equal(t, int(100), wf.consumers["Start"][0].ParallelCount)
 }
 
 func TestWithClock(t *testing.T) {

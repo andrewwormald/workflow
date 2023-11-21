@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"k8s.io/utils/clock"
 	"path"
 	"time"
@@ -13,10 +14,11 @@ func NewBuilder[Type any, Status ~string](name string) *Builder[Type, Status] {
 			clock:                   clock.RealClock{},
 			defaultPollingFrequency: 500 * time.Millisecond,
 			defaultErrBackOff:       500 * time.Millisecond,
-			processes:               make(map[Status][]process[Type, Status]),
+			consumers:               make(map[Status][]consumerConfig[Type, Status]),
 			callback:                make(map[Status][]callback[Type, Status]),
 			timeouts:                make(map[Status]timeouts[Type, Status]),
 			validStatuses:           make(map[Status]bool),
+			internalState:           make(map[string]State),
 		},
 	}
 }
@@ -26,7 +28,7 @@ type Builder[Type any, Status ~string] struct {
 }
 
 func (b *Builder[Type, Status]) AddStep(from Status, c ConsumerFunc[Type, Status], to Status, opts ...StepOption) {
-	p := process[Type, Status]{
+	p := consumerConfig[Type, Status]{
 		DestinationStatus: to,
 		Consumer:          c,
 	}
@@ -52,7 +54,7 @@ func (b *Builder[Type, Status]) AddStep(from Status, c ConsumerFunc[Type, Status
 
 	b.workflow.validStatuses[from] = true
 	b.workflow.validStatuses[to] = true
-	b.workflow.processes[from] = append(b.workflow.processes[from], p)
+	b.workflow.consumers[from] = append(b.workflow.consumers[from], p)
 }
 
 type stepOptions struct {
@@ -142,10 +144,10 @@ func (b *Builder[Type, Status]) AddTimeout(from Status, timer TimerFunc[Type, St
 	b.workflow.timeouts[from] = timeouts
 }
 
-func (b *Builder[Type, Status]) Build(esc EventStreamerConstructor, rs RecordStore, ts TimeoutStore, roleScheduler RoleScheduler, opts ...BuildOption) *Workflow[Type, Status] {
-	b.workflow.eventStreamerFn = esc
-	b.workflow.recordStore = rs
-	b.workflow.timeoutStore = ts
+func (b *Builder[Type, Status]) Build(eventStreamer EventStreamer, recordStore RecordStore, timeoutStore TimeoutStore, roleScheduler RoleScheduler, opts ...BuildOption) *Workflow[Type, Status] {
+	b.workflow.eventStreamerFn = eventStreamer
+	b.workflow.recordStore = recordStore
+	b.workflow.timeoutStore = timeoutStore
 	b.workflow.scheduler = roleScheduler
 
 	var bo buildOptions
@@ -190,7 +192,7 @@ func WithDebugMode() BuildOption {
 func (b *Builder[Type, Status]) buildGraph() map[Status][]Status {
 	graph := make(map[Status][]Status)
 	dedupe := make(map[string]bool)
-	for s, i := range b.workflow.processes {
+	for s, i := range b.workflow.consumers {
 		for _, p := range i {
 			key := path.Join(string(s), string(p.DestinationStatus))
 			if dedupe[key] {
@@ -242,4 +244,27 @@ func (b *Builder[Type, Status]) determineEndPoints(graph map[Status][]Status) ma
 	}
 
 	return endpoints
+}
+
+func Not[Type any, Status ~string](c ConsumerFunc[Type, Status]) ConsumerFunc[Type, Status] {
+	return func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
+		pass, err := c(ctx, r)
+		if err != nil {
+			return false, err
+		}
+
+		return !pass, nil
+	}
+}
+
+func DurationTimerFunc[Type any, Status ~string](duration time.Duration) TimerFunc[Type, Status] {
+	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, time.Time, error) {
+		return true, now.Add(duration), nil
+	}
+}
+
+func TimeTimerFunc[Type any, Status ~string](t time.Time) TimerFunc[Type, Status] {
+	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, time.Time, error) {
+		return true, t, nil
+	}
 }

@@ -15,10 +15,10 @@ import (
 	clock_testing "k8s.io/utils/clock/testing"
 
 	"github.com/andrewwormald/workflow"
-	"github.com/andrewwormald/workflow/connectors/eventstreaming/memstreamer"
-	"github.com/andrewwormald/workflow/connectors/recordstores/memrecordstore"
-	"github.com/andrewwormald/workflow/connectors/roleschedulers/memrolescheduler"
-	"github.com/andrewwormald/workflow/connectors/timeoutstores/memtimeoutstore"
+	"github.com/andrewwormald/workflow/adapters/memrecordstore"
+	"github.com/andrewwormald/workflow/adapters/memrolescheduler"
+	"github.com/andrewwormald/workflow/adapters/memstreamer"
+	"github.com/andrewwormald/workflow/adapters/memtimeoutstore"
 )
 
 type MyType struct {
@@ -96,7 +96,7 @@ func TestWorkflow(t *testing.T) {
 	runID, err := wf.Trigger(ctx, fid, StatusInitiated, workflow.WithInitialValue[MyType, string](&mt))
 	jtest.RequireNil(t, err)
 
-	// Once in the correct state, trigger third party callbacks
+	// Once in the correct State, trigger third party callbacks
 	workflow.TriggerCallbackOn(t, wf, fid, runID, StatusEmailConfirmationSent, ExternalEmailVerified{
 		IsVerified: true,
 	})
@@ -509,4 +509,46 @@ func TestTimeTimerFunc(t *testing.T) {
 		Yang: true,
 	}
 	workflow.Require(t, wf, "Launched", "Andrew Wormald", runID, expected)
+}
+
+func TestInternalState(t *testing.T) {
+	b := workflow.NewBuilder[string, string]("example")
+	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[string, string]) (bool, error) {
+		return true, nil
+	}, "Middle")
+
+	b.AddStep("Middle", func(ctx context.Context, r *workflow.Record[string, string]) (bool, error) {
+		return true, nil
+	}, "End", workflow.WithParallelCount(3))
+
+	recordStore := memrecordstore.New()
+	timeoutStore := memtimeoutstore.New()
+	wf := b.Build(
+		memstreamer.New(),
+		recordStore,
+		timeoutStore,
+		memrolescheduler.New(),
+	)
+
+	require.Equal(t, map[string]workflow.State{}, wf.States())
+
+	ctx := context.Background()
+	wf.Run(ctx)
+
+	time.Sleep(time.Second)
+
+	require.Equal(t, map[string]workflow.State{
+		"example-start-to-middle-consumer-1-of-1": workflow.StateRunning,
+		"example-middle-to-end-consumer-1-of-3":   workflow.StateRunning,
+		"example-middle-to-end-consumer-2-of-3":   workflow.StateRunning,
+		"example-middle-to-end-consumer-3-of-3":   workflow.StateRunning,
+	}, wf.States())
+
+	wf.Stop()
+	require.Equal(t, map[string]workflow.State{
+		"example-start-to-middle-consumer-1-of-1": workflow.StateShutdown,
+		"example-middle-to-end-consumer-1-of-3":   workflow.StateShutdown,
+		"example-middle-to-end-consumer-2-of-3":   workflow.StateShutdown,
+		"example-middle-to-end-consumer-3-of-3":   workflow.StateShutdown,
+	}, wf.States())
 }
