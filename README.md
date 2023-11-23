@@ -1,10 +1,6 @@
-# Workflow
-
 ![alt text](./logo/workflow.png)
 
-Workflow is a Golang workflow framework that encompasses these main features:
-
-## Features
+## Workflow is a Golang workflow framework that encompasses these main features:
 - Defining small units of work called "Steps"
 - Consumer management and graceful shutdown
 - Supports event streaming platforms such as Kafka and Reflex (or you can write your own implementation of the EventStreamer interface!)
