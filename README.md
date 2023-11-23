@@ -1,5 +1,7 @@
 # Workflow
 
+![alt text](./logo/workflow.png)
+
 Workflow is a Golang workflow framework that encompasses these main features:
 
 ## Features
