@@ -1,184 +1,55 @@
-# Workflow [Not production ready - breaking changes being made]
+# Workflow
 
-Workflow is a Golang workflow framework that encompasses n main features:
+Workflow is a Golang workflow framework that encompasses these main features:
 
 ## Features
-- Built in state machine allowing for durable changes with idempotency 
-- Built in support for timeout operations (e.g. account cool down periods etc)
-- Built in support for callbacks (e.g. Call an async endpoint and trigger the callback from a webhook handler)
-- Natively chain workflows together
+- Defining small units of work called "Steps"
+- Consumer management and graceful shutdown
+- Supports event streaming platforms such as Kafka and Reflex (or you can write your own implementation of the EventStreamer interface!)
+- Built in support for timeout operations (e.g. account cool down periods etc).
+- Built in support for callbacks (e.g. Call an async endpoint and trigger the callback from a webhook handler).
+- Connect two workflows together. Wait for specific events from another workflow and make it part of your workflow!
 - Super Duper testable
 
-## Example / Demo 
-Here is a fun and simple example of a workflow where we emulate sending a trading report that requires approval to be sent. The demo uses a in-mem implementation of the Store interface but can be easily swapped out for a custom implementation. A mySQL implementation is supported in the `./sqlstore` directory
+## Example / Demo
 
-- You can find the example here: `./example`
-
-##### If you pull the repo, you can run this locally without any setup:
-```bash
-go run ./example
-```
-## Step by Step example:
-### Step 1: Taking a simple object 
+### API
 ```go
-type YinYang struct {
-	Yin  bool
-	Yang bool
-}
-```
+// Trigger will kickstart a workflow for the provided foreignID starting from the provided starting status. There
+// is no limitation as to where you start the workflow from. For workflows that have data preceding the initial
+// trigger that needs to be used in the workflow, using WithInitialValue will allow you to provide pre-populated
+// fields of Type that can be accessed by the consumers.
+//
+// foreignID should not be random and should be deterministic for the thing that you are running the workflow for.
+// This especially helps when connecting other workflows as the foreignID is the only way to connect the streams. The
+// same goes for Callback as you will need the foreignID to connect the callback back to the workflow instance that
+// was run.
+Trigger(ctx context.Context, foreignID string, startingStatus Status, opts ...TriggerOption[Type, Status]) (runID string, err error)
 
-### Step 2: Building a workflow
-```go
-b := workflow.NewBuilder[YinYang]("example")
-b.AddStep("Start", func(ctx context.Context, key workflow.Key, yy *YinYang) (bool, error) {
-    yy.Yin = true
-    return true, nil
-}, "Middle")
+// ScheduleTrigger takes a cron spec and will call Trigger at the specified intervals. The same options are
+// available for ScheduleTrigger than they are for Trigger.
+ScheduleTrigger(ctx context.Context, foreignID string, startingStatus Status, spec string, opts ...TriggerOption[Type, Status]) error
 
-b.AddCallback("Middle", func(ctx context.Context, key workflow.Key, yy *YinYang, r io.Reader) (bool, error) {
-    yy.Yang = true
-    return true, nil
-}, "End")
+// Await is a blocking call that returns the typed Record when the workflow of the specified run ID reaches the
+// specified status.
+Await(ctx context.Context, foreignID, runID string, status Status, opts ...AwaitOption) (*Record[Type, Status], error)
 
-wf := b.Build(
-	store,
-	cursor,
-	scheduler,
-)
-```
+// Callback can be used if Builder.AddCallback has been defined for the provided status. The data in the reader
+// will be passed to the CallbackFunc that you specify and so the serialisation and deserialisation is in the
+// hands of the user.
+Callback(ctx context.Context, foreignID string, status Status, payload io.Reader) error
 
-### Step 3: Call Run to launch the consumers in the background
-```go
-wf.Run(ctx)
-```
+// Run must be called in order to start up all the background consumers / consumers required to run the workflow. Run
+// only needs to be called once. Any subsequent calls to run are safe and are noop.
+Run(ctx context.Context)
 
-### Step 4: Triggering the workflow
-```go
-foreignID := "andrew@workflow.com"
-runID, err := wf.Trigger(ctx, foreignID, "Start")
-if err != nil {
-    panic(err)
-}
-```
-#### Example of providing a non-zero value starting point of the primary type (YinYang):
-```go 
-startingValue := &YinYang{
-    Yin: true,
-}
-
-runID, err := wf.Trigger(ctx, foreignID, "Start", workflow.WithInitialValue(startingValue))
-if err != nil {
-    panic(err)
-}
-```
-### OR use the cron styled schedule trigger
-##### See the standard cron spec below that can be used for scheduling triggers
-```go
-foreignID := "andrew@workflow.com"
-err := wf.ScheduleTrigger(ctx, foreignID, "Start", "@monthly")
-if err != nil {
-    panic(err)
-}
-```
-
-| Entry |  Description   |   Equivalent to   |
-| :---:   |:---:|:----:|
-| @yearly (or @annually) | Run once a year at midnight of 1 January | 0 0 1 1 *  |
-| @monthly | Run once a month at midnight of the first day of the month | 0 0 1 * *  |
-| @weekly | Run once a week at midnight on Sunday morning | 0 0 * * 0  |
-| @daily (or @midnight) | Run once a day at midnight | 0 0 * * *  |
-| @hourly | Run once an hour at the beginning of the hour | 0 * * * *  |
-
-
-### Step 5 A: If you wish for a async await pattern after calling Trigger
-```go
-yinYang, err := wf.Await(ctx, foreignID, "End")
-if err != nil {
-    panic(err)
-}
-```
-
-### Callbacks: Interacting through callbacks are easy peasy
-If you were to switch out an automated step for a callback, where the workflow pauses until we get the explicit interaction, then this is what it would look like:
-
-##### Configuring the callback
-```go
-b.AddCallback("Middle", func(ctx context.Context, key workflow.Key, t *YinYang, r io.Reader) (bool, error) {
-    b, err := io.ReadAll(r)
-    if err != nil {
-        return false, err
-    }
-	
-    var e External
-    err = json.Unmarshal(b, &e)
-    if err != nil {
-        return false, err
-    }
-
-    t.Yang = e.Thing == "Some"
-    return true, nil
-}, "End")
-```
-##### Calling the callback
-```go
-type External struct {
-    Thing string
-}
-
-external := External{
-    Thing: "Something",
-}
-
-b, err := json.Marshal(external)
-if err != nil {
-    panic(err)
-}
-
-reader := bytes.NewReader(b)
-
-err = wf.Callback(ctx, foreignID, "Middle", reader)
-if err != nil {
-    panic(err)
-}
-```
-
-### Timeouts: Scheduling for a future date?
-If you were to switch out an automated step for a timeout, a scheduled process, then this is what it would look like:
-##### Configuring the timeout
-```go
-b.AddTimeout(
-    "Middle",
-    func(ctx context.Context, key workflow.Key, now time.Time) (bool, time.Time, error) {
-        
-    },
-    func(ctx context.Context, key Key, t *string, now time.Time) (bool, error) {
-        return true, nil
-    },
-    "End",
-)
-
-b.AddTimeout(
-    "Middle",
-    workflow.TimeTimerFunc(time.Hour),
-    func(ctx context.Context, key Key, t *string, now time.Time) (bool, error) {
-        return true, nil
-    },
-    "End",
-)
-
-b.AddTimeout(
-    "Middle",
-    workflow.DurationTimerFunc(time.Hour),
-    func(ctx context.Context, key Key, t *string, now time.Time) (bool, error) {
-        return true, nil
-    },
-    "End",
-)
+// Stop tells the workflow to shut down gracefully.
+Stop()
 ```
 
 ## Testing
 
-One core focus of `workflow` is to be easily tested.
+One core focus of `workflow` is to encourage writing tests by making it easy to do so.
 
 The `testing.go` file houses utility functions for testing your workflow. Some other
  useful patterns is to use `k8s.io/utils/clock/testing` testing clock to manipulate

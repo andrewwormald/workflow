@@ -521,6 +521,18 @@ func TestInternalState(t *testing.T) {
 		return true, nil
 	}, "End", workflow.WithParallelCount(3))
 
+	b.ConnectWorkflow(
+		"other workflow",
+		"Completed",
+		memstreamer.New(),
+		func(ctx context.Context, e *workflow.Event) (string, error) { return e.ForeignID, nil },
+		func(ctx context.Context, r *workflow.Record[string, string], e *workflow.Event) (bool, error) {
+			return true, nil
+		},
+		"End",
+		workflow.WithParallelCount(2),
+	)
+
 	recordStore := memrecordstore.New()
 	timeoutStore := memtimeoutstore.New()
 	wf := b.Build(
@@ -538,18 +550,22 @@ func TestInternalState(t *testing.T) {
 	time.Sleep(time.Second)
 
 	require.Equal(t, map[string]workflow.State{
-		"example-start-to-middle-consumer-1-of-1": workflow.StateRunning,
-		"example-middle-to-end-consumer-1-of-3":   workflow.StateRunning,
-		"example-middle-to-end-consumer-2-of-3":   workflow.StateRunning,
-		"example-middle-to-end-consumer-3-of-3":   workflow.StateRunning,
+		"example-middle-to-end-consumer-1-of-3":                             workflow.StateRunning,
+		"example-middle-to-end-consumer-2-of-3":                             workflow.StateRunning,
+		"example-middle-to-end-consumer-3-of-3":                             workflow.StateRunning,
+		"example-start-to-middle-consumer-1-of-1":                           workflow.StateRunning,
+		"other_workflow-completed-to-example-end-connector-consumer-1-of-2": workflow.StateRunning,
+		"other_workflow-completed-to-example-end-connector-consumer-2-of-2": workflow.StateRunning,
 	}, wf.States())
 
 	wf.Stop()
 	require.Equal(t, map[string]workflow.State{
-		"example-start-to-middle-consumer-1-of-1": workflow.StateShutdown,
-		"example-middle-to-end-consumer-1-of-3":   workflow.StateShutdown,
-		"example-middle-to-end-consumer-2-of-3":   workflow.StateShutdown,
-		"example-middle-to-end-consumer-3-of-3":   workflow.StateShutdown,
+		"example-start-to-middle-consumer-1-of-1":                           workflow.StateShutdown,
+		"example-middle-to-end-consumer-1-of-3":                             workflow.StateShutdown,
+		"example-middle-to-end-consumer-2-of-3":                             workflow.StateShutdown,
+		"example-middle-to-end-consumer-3-of-3":                             workflow.StateShutdown,
+		"other_workflow-completed-to-example-end-connector-consumer-1-of-2": workflow.StateShutdown,
+		"other_workflow-completed-to-example-end-connector-consumer-2-of-2": workflow.StateShutdown,
 	}, wf.States())
 }
 
@@ -605,6 +621,91 @@ func TestConnectStream(t *testing.T) {
 			return true, nil
 		},
 		"End",
+	)
+
+	workflowB := b.Build(
+		streamerB,
+		memrecordstore.New(),
+		memtimeoutstore.New(),
+		memrolescheduler.New(),
+	)
+
+	workflowB.Run(ctx)
+
+	foreignID := "andrewwormald"
+
+	// Start workflowB from "Start"
+	runID, err := workflowB.Trigger(ctx, foreignID, "Start")
+	jtest.RequireNil(t, err)
+
+	// Wait until workflow B is at "Middle" where we expect workflowB to wait for workflowA
+	_, err = workflowB.Await(ctx, foreignID, runID, "Middle")
+	jtest.RequireNil(t, err)
+
+	// Trigger workflowA
+	_, err = workflowA.Trigger(ctx, foreignID, "Begin")
+	jtest.RequireNil(t, err)
+
+	// Wait until workflowB reaches "End" before finishing the test
+	// After reaching "End" we know we merged an event from workflowA into workflowB in order for workflowB to complete.
+	workflow.Require(t, workflowB, "End", foreignID, runID, typeB{
+		Val: "workflow A set this value",
+	})
+}
+
+func TestConnectStreamParallelConsumer(t *testing.T) {
+	ctx := context.Background()
+	streamerA := memstreamer.New()
+
+	type typeA struct {
+		Val string
+	}
+
+	a := workflow.NewBuilder[typeA, string]("workflow A")
+	a.AddStep("Begin", func(ctx context.Context, r *workflow.Record[typeA, string]) (bool, error) {
+		r.Object.Val = "workflow A set this value"
+		return true, nil
+	}, "Completed")
+
+	workflowA := a.Build(
+		streamerA,
+		memrecordstore.New(),
+		memtimeoutstore.New(),
+		memrolescheduler.New(),
+	)
+	workflowA.Run(ctx)
+
+	streamerB := memstreamer.New()
+
+	type typeB struct {
+		Val string
+	}
+	b := workflow.NewBuilder[typeB, string]("workflow B")
+	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[typeB, string]) (bool, error) {
+		return true, nil
+	}, "Middle")
+	b.ConnectWorkflow(
+		workflowA.Name,
+		"Completed",
+		streamerA,
+		func(ctx context.Context, e *workflow.Event) (string, error) {
+			return e.ForeignID, nil
+		},
+		func(ctx context.Context, r *workflow.Record[typeB, string], e *workflow.Event) (bool, error) {
+			wr, err := workflow.UnmarshalRecord(e.Body)
+			jtest.RequireNil(t, err)
+
+			var objectA typeA
+			err = workflow.Unmarshal(wr.Object, &objectA)
+			jtest.RequireNil(t, err)
+
+			// Copy the value over from objectA that came from workflowA to our object in workflowB
+			r.Object.Val = objectA.Val
+
+			return true, nil
+		},
+		"End",
+		workflow.WithParallelCount(2),
 	)
 
 	workflowB := b.Build(
