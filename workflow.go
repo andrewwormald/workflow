@@ -9,11 +9,16 @@ import (
 	"k8s.io/utils/clock"
 )
 
-type Protocol[Type any, Status ~string] interface {
+type API[Type any, Status ~string] interface {
 	// Trigger will kickstart a workflow for the provided foreignID starting from the provided starting status. There
 	// is no limitation as to where you start the workflow from. For workflows that have data preceding the initial
 	// trigger that needs to be used in the workflow, using WithInitialValue will allow you to provide pre-populated
 	// fields of Type that can be accessed by the consumers.
+	//
+	// foreignID should not be random and should be deterministic for the thing that you are running the workflow for.
+	// This especially helps when connecting other workflows as the foreignID is the only way to connect the streams. The
+	// same goes for Callback as you will need the foreignID to connect the callback back to the workflow instance that
+	// was run.
 	Trigger(ctx context.Context, foreignID string, startingStatus Status, opts ...TriggerOption[Type, Status]) (runID string, err error)
 
 	// ScheduleTrigger takes a cron spec and will call Trigger at the specified intervals. The same options are
@@ -33,7 +38,7 @@ type Protocol[Type any, Status ~string] interface {
 	// only needs to be called once. Any subsequent calls to run are safe and are noop.
 	Run(ctx context.Context)
 
-	// Stop tells the workflow to shutdown gracefully.
+	// Stop tells the workflow to shut down gracefully.
 	Stop()
 }
 
@@ -57,6 +62,8 @@ type Workflow[Type any, Status ~string] struct {
 	consumers map[Status][]consumerConfig[Type, Status]
 	callback  map[Status][]callback[Type, Status]
 	timeouts  map[Status]timeouts[Type, Status]
+
+	connectorConfigs []connectorConfig[Type, Status]
 
 	internalStateMu sync.Mutex
 	// internalState holds the State of all expected consumers and timeout  go routines using their role names
@@ -95,6 +102,18 @@ func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 			go timeoutPoller(ctx, w, status, timeouts)
 			go timeoutAutoInserterConsumer(ctx, w, status, timeouts)
 		}
+
+		for _, config := range w.connectorConfigs {
+			if config.parallelCount < 2 {
+				// Launch all consumers in runners
+				go connectorConsumer(ctx, w, &config, 1, 1)
+			} else {
+				// Run as sharded parallel consumers
+				for i := 1; i <= config.parallelCount; i++ {
+					go connectorConsumer(ctx, w, &config, i, config.parallelCount)
+				}
+			}
+		}
 	})
 }
 
@@ -106,7 +125,8 @@ func (w *Workflow[Type, Status]) Stop() {
 
 	for {
 		var runningProcesses int
-		for _, state := range w.States() {
+		states := w.States()
+		for _, state := range states {
 			switch state {
 			case StateUnknown, StateShutdown:
 				continue

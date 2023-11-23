@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// ConsumerFunc provides a record that is expected to be modified if the data needs to change. If true is returned with
+// a nil error then the record, along with its modifications, will be stored. If false is returned with a nil error then
+// the record will not be stored and the event will be skipped and move onto the next event. If a non-nil error is
+// returned then the consumer will back off and try again until a nil error occurs or the retry max has been reached
+// if a Dead Letter Queue has been configured for the workflow.
 type ConsumerFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status]) (bool, error)
 
 type consumerConfig[Type any, Status ~string] struct {
@@ -59,7 +64,7 @@ func consumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, S
 		if ctx.Err() != nil {
 			// Gracefully exit when context has been cancelled
 			if w.debugMode {
-				log.Info(ctx, "shutting down consumerConfig - consumer", j.MKV{
+				log.Info(ctx, "shutting down consumer", j.MKV{
 					"workflow_name":      w.Name,
 					"current_status":     currentStatus,
 					"destination_status": p.DestinationStatus,
@@ -74,7 +79,7 @@ func consumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, S
 		err = runStepConsumerForever[Type, Status](ctx, w, p, currentStatus, role, shard, totalShards)
 		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
 			if w.debugMode {
-				log.Info(ctx, "shutting down consumerConfig - consumer", j.MKV{
+				log.Info(ctx, "shutting down consumer", j.MKV{
 					"workflow_name":      w.Name,
 					"current_status":     currentStatus,
 					"destination_status": p.DestinationStatus,
@@ -88,7 +93,7 @@ func consumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, S
 		case <-ctx.Done():
 			cancel()
 			if w.debugMode {
-				log.Info(ctx, "shutting down consumerConfig - consumer", j.MKV{
+				log.Info(ctx, "shutting down consumer", j.MKV{
 					"workflow_name":      w.Name,
 					"current_status":     currentStatus,
 					"destination_status": p.DestinationStatus,
@@ -129,17 +134,17 @@ func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Wo
 			return err
 		}
 
-		r, err := UnmarshalRecord(e.Body)
+		wr, err := UnmarshalRecord(e.Body)
 		if err != nil {
 			return err
 		}
 
-		latest, err := w.recordStore.Latest(ctx, r.WorkflowName, r.ForeignID)
+		latest, err := w.recordStore.Latest(ctx, wr.WorkflowName, wr.ForeignID)
 		if err != nil {
 			return err
 		}
 
-		if latest.Status != r.Status {
+		if latest.Status != wr.Status {
 			err = ack()
 			if err != nil {
 				return err
@@ -147,7 +152,7 @@ func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Wo
 			continue
 		}
 
-		if latest.RunID != r.RunID {
+		if latest.RunID != wr.RunID {
 			err = ack()
 			if err != nil {
 				return err
@@ -155,53 +160,7 @@ func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Wo
 			continue
 		}
 
-		var t Type
-		err = Unmarshal(r.Object, &t)
-		if err != nil {
-			return err
-		}
-
-		record := Record[Type, Status]{
-			WireRecord: *r,
-			Status:     Status(r.Status),
-			Object:     &t,
-		}
-
-		ok, err := p.Consumer(ctx, &record)
-		if err != nil {
-			return errors.Wrap(err, "failed to consumerConfig", j.MKV{
-				"workflow_name":      r.WorkflowName,
-				"foreign_id":         r.ForeignID,
-				"current_status":     r.Status,
-				"destination_status": p.DestinationStatus,
-			})
-		}
-
-		if ok {
-			b, err := Marshal(&record.Object)
-			if err != nil {
-				return err
-			}
-
-			isEnd := w.endPoints[p.DestinationStatus]
-			wr := &WireRecord{
-				RunID:        record.RunID,
-				WorkflowName: record.WorkflowName,
-				ForeignID:    record.ForeignID,
-				Status:       string(p.DestinationStatus),
-				IsStart:      false,
-				IsEnd:        isEnd,
-				Object:       b,
-				CreatedAt:    record.CreatedAt,
-			}
-
-			err = update(ctx, w.eventStreamerFn, w.recordStore, wr)
-			if err != nil {
-				return err
-			}
-		}
-
-		err = ack()
+		err = consume(ctx, wr, p.Consumer, ack, p.DestinationStatus, w.endPoints, w.eventStreamerFn, w.recordStore)
 		if err != nil {
 			return err
 		}
@@ -230,4 +189,54 @@ func wait(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
+}
+
+func consume[Type any, Status ~string](ctx context.Context, wr *WireRecord, cf ConsumerFunc[Type, Status], ack Ack, destinationStatus Status, endPoints map[Status]bool, es EventStreamer, rs RecordStore) error {
+	var t Type
+	err := Unmarshal(wr.Object, &t)
+	if err != nil {
+		return err
+	}
+
+	record := Record[Type, Status]{
+		WireRecord: *wr,
+		Status:     Status(wr.Status),
+		Object:     &t,
+	}
+
+	ok, err := cf(ctx, &record)
+	if err != nil {
+		return errors.Wrap(err, "failed to consume", j.MKV{
+			"workflow_name":      wr.WorkflowName,
+			"foreign_id":         wr.ForeignID,
+			"current_status":     wr.Status,
+			"destination_status": destinationStatus,
+		})
+	}
+
+	if ok {
+		b, err := Marshal(&record.Object)
+		if err != nil {
+			return err
+		}
+
+		isEnd := endPoints[destinationStatus]
+		wr := &WireRecord{
+			RunID:        record.RunID,
+			WorkflowName: record.WorkflowName,
+			ForeignID:    record.ForeignID,
+			Status:       string(destinationStatus),
+			IsStart:      false,
+			IsEnd:        isEnd,
+			Object:       b,
+			CreatedAt:    record.CreatedAt,
+		}
+
+		err = update(ctx, es, rs, wr)
+		if err != nil {
+			return err
+		}
+	}
+
+	return ack()
 }

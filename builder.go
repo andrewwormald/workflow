@@ -144,6 +144,25 @@ func (b *Builder[Type, Status]) AddTimeout(from Status, timer TimerFunc[Type, St
 	b.workflow.timeouts[from] = timeouts
 }
 
+func (b *Builder[Type, Status]) ConnectWorkflow(workflowName string, status string, stream EventStreamer, filter ConnectorFilter, consumer ConnectorConsumerFunc[Type, Status], to Status, opts ...StepOption) {
+	var stepOptions stepOptions
+	for _, opt := range opts {
+		opt(&stepOptions)
+	}
+	b.workflow.validStatuses[to] = true
+	b.workflow.connectorConfigs = append(b.workflow.connectorConfigs, connectorConfig[Type, Status]{
+		workflowName:     workflowName,
+		status:           status,
+		stream:           stream,
+		filter:           filter,
+		consumer:         consumer,
+		to:               string(to),
+		pollingFrequency: stepOptions.pollingFrequency,
+		errBackOff:       stepOptions.errBackOff,
+		parallelCount:    stepOptions.parallelCount,
+	})
+}
+
 func (b *Builder[Type, Status]) Build(eventStreamer EventStreamer, recordStore RecordStore, timeoutStore TimeoutStore, roleScheduler RoleScheduler, opts ...BuildOption) *Workflow[Type, Status] {
 	b.workflow.eventStreamerFn = eventStreamer
 	b.workflow.recordStore = recordStore
@@ -258,13 +277,13 @@ func Not[Type any, Status ~string](c ConsumerFunc[Type, Status]) ConsumerFunc[Ty
 }
 
 func DurationTimerFunc[Type any, Status ~string](duration time.Duration) TimerFunc[Type, Status] {
-	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, time.Time, error) {
-		return true, now.Add(duration), nil
+	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (time.Time, error) {
+		return now.Add(duration), nil
 	}
 }
 
 func TimeTimerFunc[Type any, Status ~string](t time.Time) TimerFunc[Type, Status] {
-	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, time.Time, error) {
-		return true, t, nil
+	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (time.Time, error) {
+		return t, nil
 	}
 }
