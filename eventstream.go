@@ -36,7 +36,7 @@ type ConsumerOptions struct {
 }
 
 // EventFilter can be passed to the event streaming implementation to allow specific consumers to have an
-// earlier on filtering consumerConfig. True is returned when the event should be skipped.
+// earlier on filtering process. True is returned when the event should be skipped.
 type EventFilter func(e *Event) bool
 
 type ConsumerOption func(*ConsumerOptions)
@@ -101,7 +101,7 @@ func awaitWorkflowStatusByForeignID[Type any, Status ~string](ctx context.Contex
 		switch true {
 		// If the record doesn't match the status, foreignID, and runID then sleep and try again
 		case r.Status != string(status), r.ForeignID != foreignID, r.RunID != runID:
-			// Increment the offset / cursor to consumerConfig new events
+			// Increment the offset / cursor to consume new events
 			err = ack()
 			if err != nil {
 				return nil, err

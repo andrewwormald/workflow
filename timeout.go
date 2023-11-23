@@ -175,12 +175,12 @@ func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, 
 
 		cunsumerFunc := func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
 			for _, config := range timeouts.Transitions {
-				ok, expireAt, err := config.TimerFunc(ctx, r, w.clock.Now())
+				expireAt, err := config.TimerFunc(ctx, r, w.clock.Now())
 				if err != nil {
 					return false, err
 				}
 
-				if !ok {
+				if expireAt.IsZero() {
 					// Ignore and evaluate the next
 					continue
 				}
@@ -208,7 +208,7 @@ func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, 
 		)
 		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
 			if w.debugMode {
-				log.Info(ctx, "shutting down consumerConfig - timeout auto inserter consumer", j.MKV{
+				log.Info(ctx, "shutting down timeout auto inserter consumer", j.MKV{
 					"workflow_name": w.Name,
 					"status":        status,
 				})
@@ -227,6 +227,13 @@ func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, 
 	}
 }
 
-type TimerFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, time.Time, error)
+// TimerFunc exists to allow the specification of when the timeout should expire dynamically. If not time is set then a
+// timeout will not be created and the event will be skipped. If the time is set then a timeout will be created and
+// once expired TimeoutFunc will be called. Any non-nil error will be retried with backoff.
+type TimerFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], now time.Time) (time.Time, error)
 
+// TimeoutFunc runs once the timeout has expired which is set by TimerFunc. If false is returned with a nil error
+// then the timeout is skipped and not retried at a later date. If a non-nil error is returned the TimeoutFunc will be
+// called again until a nil error is returned. If true is returned with a nil error then the provided record and any
+// modifications made to it will be stored and the status updated - continuing the workflow.
 type TimeoutFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, error)

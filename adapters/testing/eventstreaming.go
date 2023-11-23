@@ -98,15 +98,15 @@ func setEmail() func(ctx context.Context, t *workflow.Record[User, SyncStatus]) 
 	}
 }
 
-func coolDownTimerFunc() func(ctx context.Context, r *workflow.Record[User, SyncStatus], now time.Time) (bool, time.Time, error) {
-	return func(ctx context.Context, r *workflow.Record[User, SyncStatus], now time.Time) (bool, time.Time, error) {
+func coolDownTimerFunc() func(ctx context.Context, r *workflow.Record[User, SyncStatus], now time.Time) (time.Time, error) {
+	return func(ctx context.Context, r *workflow.Record[User, SyncStatus], now time.Time) (time.Time, error) {
 		// Place a 1-hour cool down period for Great Britain users
 		if r.Object.CountryCode == "GB" {
-			return true, now.Add(time.Hour), nil
+			return now.Add(time.Hour), nil
 		}
 
 		// Don't provide a timeout for users outside of GB
-		return false, time.Time{}, nil
+		return time.Time{}, nil
 	}
 }
 

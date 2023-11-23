@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	clock_testing "k8s.io/utils/clock/testing"
+	"reflect"
 	"testing"
 	"time"
 
@@ -101,4 +102,44 @@ func TestWithTimeoutPollingFrequency(t *testing.T) {
 	wf := b.Build(nil, nil, nil, nil)
 
 	require.Equal(t, time.Minute, wf.timeouts["Start"].PollingFrequency)
+}
+
+func TestConnectWorkflowConstruction(t *testing.T) {
+	var externalStream = (EventStreamer)(nil)
+
+	b := NewBuilder[string, string]("workflow B")
+	b.AddStep("Start", func(ctx context.Context, r *Record[string, string]) (bool, error) {
+		return true, nil
+	}, "Middle")
+
+	filter := func(ctx context.Context, e *Event) (string, error) {
+		return e.ForeignID, nil
+	}
+
+	consumer := func(ctx context.Context, r *Record[string, string], e *Event) (bool, error) {
+		return true, nil
+	}
+	b.ConnectWorkflow(
+		"workflowA",
+		"Completed",
+		externalStream,
+		filter,
+		consumer,
+		"End",
+		WithParallelCount(3),
+		WithStepPollingFrequency(time.Second*10),
+		WithStepErrBackOff(time.Minute),
+	)
+	wf := b.Build(nil, nil, nil, nil)
+
+	for _, config := range wf.connectorConfigs {
+		require.Equal(t, "workflowA", config.workflowName)
+		require.Equal(t, "Completed", config.status)
+		require.Equal(t, externalStream, config.stream)
+		require.Equal(t, reflect.ValueOf(consumer).Pointer(), reflect.ValueOf(config.consumer).Pointer())
+		require.Equal(t, "End", config.to)
+		require.Equal(t, time.Second*10, config.pollingFrequency)
+		require.Equal(t, time.Minute, config.errBackOff)
+		require.Equal(t, 3, config.parallelCount)
+	}
 }
