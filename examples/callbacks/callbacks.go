@@ -23,8 +23,8 @@ type Deps struct {
 	RoleScheduler workflow.RoleScheduler
 }
 
-func CallbackWorkflow(d Deps) *workflow.Workflow[CallbackExample, string] {
-	b := workflow.NewBuilder[CallbackExample, string]("timeout example")
+func CallbackExampleWorkflow(d Deps) *workflow.Workflow[CallbackExample, string] {
+	b := workflow.NewBuilder[CallbackExample, string]("callback example")
 
 	b.AddCallback("Start", func(ctx context.Context, r *workflow.Record[CallbackExample, string], reader io.Reader) (bool, error) {
 		b, err := io.ReadAll(reader)

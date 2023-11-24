@@ -19,7 +19,7 @@ import (
 func TestTimeoutWorkflow(t *testing.T) {
 	now := time.Now().UTC()
 	clock := clocktesting.NewFakeClock(now)
-	wf := timeouts.TimeoutWorkflow(timeouts.Deps{
+	wf := timeouts.TimeoutExampleWorkflow(timeouts.Deps{
 		EventStreamer: memstreamer.New(),
 		RecordStore:   memrecordstore.New(),
 		TimeoutStore:  memtimeoutstore.New(),

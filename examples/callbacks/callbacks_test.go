@@ -14,7 +14,7 @@ import (
 )
 
 func TestCallbackWorkflow(t *testing.T) {
-	wf := callbacks.CallbackWorkflow(callbacks.Deps{
+	wf := callbacks.CallbackExampleWorkflow(callbacks.Deps{
 		EventStreamer: memstreamer.New(),
 		RecordStore:   memrecordstore.New(),
 		TimeoutStore:  memtimeoutstore.New(),
