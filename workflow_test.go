@@ -110,7 +110,7 @@ func TestWorkflow(t *testing.T) {
 		OTPCode: expectedOTP,
 	})
 
-	workflow.AwaitTimeoutInsert(t, wf, StatusOTPVerified, fid, runID)
+	workflow.AwaitTimeoutInsert(t, wf, fid, runID, StatusOTPVerified)
 
 	// Advance time forward by one hour to trigger the timeout
 	clock.Step(time.Hour)
@@ -172,7 +172,7 @@ func TestTimeout(t *testing.T) {
 	_, err = wf.Await(ctx, "example", runID, StatusProfileCreated)
 	jtest.RequireNil(t, err)
 
-	workflow.AwaitTimeoutInsert(t, wf, StatusProfileCreated, "example", runID)
+	workflow.AwaitTimeoutInsert(t, wf, "example", runID, StatusProfileCreated)
 
 	// Advance time forward by one hour to trigger the timeout
 	clock.Step(time.Hour)
@@ -453,13 +453,13 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 	expected := MyType{
 		Email: "andrew@workflow.com",
 	}
-	workflow.Require(t, wf, "Updated email", foreignID, runID, expected)
+	workflow.Require(t, wf, foreignID, runID, "Updated email", expected)
 
 	expected = MyType{
 		Email:     "andrew@workflow.com",
 		Cellphone: "+44 349 8594",
 	}
-	workflow.Require(t, wf, "Updated cellphone", foreignID, runID, expected)
+	workflow.Require(t, wf, foreignID, runID, "Updated cellphone", expected)
 }
 
 func TestTimeTimerFunc(t *testing.T) {
@@ -500,7 +500,7 @@ func TestTimeTimerFunc(t *testing.T) {
 	runID, err := wf.Trigger(ctx, "Andrew Wormald", "Pending")
 	jtest.RequireNil(t, err)
 
-	workflow.AwaitTimeoutInsert(t, wf, "Pending", "Andrew Wormald", runID)
+	workflow.AwaitTimeoutInsert(t, wf, "Andrew Wormald", runID, "Pending")
 
 	clock.SetTime(launchDate)
 
@@ -508,7 +508,7 @@ func TestTimeTimerFunc(t *testing.T) {
 		Yin:  true,
 		Yang: true,
 	}
-	workflow.Require(t, wf, "Launched", "Andrew Wormald", runID, expected)
+	workflow.Require(t, wf, "Andrew Wormald", runID, "Launched", expected)
 }
 
 func TestInternalState(t *testing.T) {
@@ -648,7 +648,7 @@ func TestConnectStream(t *testing.T) {
 
 	// Wait until workflowB reaches "End" before finishing the test
 	// After reaching "End" we know we merged an event from workflowA into workflowB in order for workflowB to complete.
-	workflow.Require(t, workflowB, "End", foreignID, runID, typeB{
+	workflow.Require(t, workflowB, foreignID, runID, "End", typeB{
 		Val: "workflow A set this value",
 	})
 }
@@ -733,7 +733,7 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 
 	// Wait until workflowB reaches "End" before finishing the test
 	// After reaching "End" we know we merged an event from workflowA into workflowB in order for workflowB to complete.
-	workflow.Require(t, workflowB, "End", foreignID, runID, typeB{
+	workflow.Require(t, workflowB, foreignID, runID, "End", typeB{
 		Val: "workflow A set this value",
 	})
 }

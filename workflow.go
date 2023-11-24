@@ -122,6 +122,10 @@ func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 // Stop cancels the context provided to all the background processes that the workflow launched and waits for all of
 // them to shut down gracefully.
 func (w *Workflow[Type, Status]) Stop() {
+	if w.cancel == nil {
+		return
+	}
+
 	// Cancel the parent context of the workflow to gracefully shutdown.
 	w.cancel()
 
