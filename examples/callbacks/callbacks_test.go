@@ -2,10 +2,11 @@ package callbacks_test
 
 import (
 	"context"
-	"github.com/andrewwormald/workflow"
-	"github.com/luno/jettison/jtest"
 	"testing"
 
+	"github.com/luno/jettison/jtest"
+
+	"github.com/andrewwormald/workflow"
 	"github.com/andrewwormald/workflow/adapters/memrecordstore"
 	"github.com/andrewwormald/workflow/adapters/memrolescheduler"
 	"github.com/andrewwormald/workflow/adapters/memstreamer"
