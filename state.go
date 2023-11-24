@@ -20,5 +20,10 @@ func (w *Workflow[Type, Status]) States() map[string]State {
 	w.internalStateMu.Lock()
 	defer w.internalStateMu.Unlock()
 
-	return w.internalState
+	states := make(map[string]State)
+	for k, v := range w.internalState {
+		states[k] = v
+	}
+
+	return states
 }

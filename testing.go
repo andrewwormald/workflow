@@ -5,11 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/luno/jettison/jtest"
 	"github.com/stretchr/testify/require"
 	"testing"
-	"time"
-
-	"github.com/luno/jettison/jtest"
 )
 
 func TriggerCallbackOn[Type any, Status ~string, Payload any](t *testing.T, w *Workflow[Type, Status], foreignID, runID string, waitFor Status, p Payload) {
@@ -34,17 +32,32 @@ func AwaitTimeoutInsert[Type any, Status ~string](t *testing.T, w *Workflow[Type
 		panic("AwaitTimeout can only be used for testing")
 	}
 
-	timeouts := w.timeouts[status]
-	pf := timeouts.PollingFrequency
-	if pf.Nanoseconds() == 0 {
-		pf = w.defaultPollingFrequency
+	var found bool
+	for !found {
+		if w.ctx.Err() != nil {
+			return
+		}
+
+		ls, err := w.timeoutStore.List(w.ctx, w.Name)
+		jtest.RequireNil(t, err)
+
+		for _, l := range ls {
+			if l.Status != string(status) {
+				continue
+			}
+
+			if l.ForeignID != foreignID {
+				continue
+			}
+
+			if l.RunID != runID {
+				continue
+			}
+
+			found = true
+			break
+		}
 	}
-
-	time.Sleep(pf * 2)
-
-	ctx := context.TODO()
-	_, err := w.Await(ctx, foreignID, runID, status, WithPollingFrequency(pf))
-	jtest.RequireNil(t, err)
 }
 
 func Require[Type any, Status ~string](t *testing.T, w *Workflow[Type, Status], status Status, foreignID, runID string, expected Type) {
