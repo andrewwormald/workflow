@@ -30,16 +30,16 @@ func TestGettingStartedWorkflow(t *testing.T) {
 	runID, err := wf.Trigger(ctx, foreignID, "Started")
 	jtest.RequireNil(t, err)
 
-	workflow.Require(t, wf, "Read the docs", foreignID, runID, gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, runID, "Read the docs", gettingstarted.GettingStarted{
 		ReadTheDocs: "✅",
 	})
 
-	workflow.Require(t, wf, "Followed the example", foreignID, runID, gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, runID, "Followed the example", gettingstarted.GettingStarted{
 		ReadTheDocs:     "✅",
 		FollowAnExample: "✅",
 	})
 
-	workflow.Require(t, wf, "Created a fun example", foreignID, runID, gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, runID, "Created a fun example", gettingstarted.GettingStarted{
 		ReadTheDocs:       "✅",
 		FollowAnExample:   "✅",
 		CreateAFunExample: "✅",
