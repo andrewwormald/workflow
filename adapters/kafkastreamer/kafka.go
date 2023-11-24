@@ -93,9 +93,6 @@ func (s StreamConstructor) NewConsumer(topic string, name string, opts ...workfl
 	}
 
 	startOffset := kafka.FirstOffset
-	if copts.StreamFromLatest {
-		startOffset = kafka.LastOffset
-	}
 
 	kafkaReader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        s.brokers,
