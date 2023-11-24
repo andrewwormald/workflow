@@ -9,8 +9,8 @@ import (
 	"github.com/andrewwormald/workflow/examples/gettingstarted"
 )
 
-func KafkaExampleWorkflow() *workflow.Workflow[gettingstarted.GettingStarted, gettingstarted.Status] {
-	return gettingstarted.GettingStartedWithEnumWorkflow(gettingstarted.Deps{
+func ExampleWorkflow() *workflow.Workflow[gettingstarted.GettingStarted, gettingstarted.Status] {
+	return gettingstarted.WorkflowWithEnum(gettingstarted.Deps{
 		EventStreamer: kafkastreamer.New([]string{"localhost:9092"}),
 		RecordStore:   memrecordstore.New(),
 		TimeoutStore:  memtimeoutstore.New(),

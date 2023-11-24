@@ -17,11 +17,11 @@ import (
 	"github.com/andrewwormald/workflow/examples/scheduletrigger"
 )
 
-func TestScheduleTriggerExampleWorkflow(t *testing.T) {
+func TestExampleWorkflow(t *testing.T) {
 	recordStore := memrecordstore.New()
 	now := time.Now().UTC()
 	clock := clocktesting.NewFakeClock(now)
-	wf := scheduletrigger.ScheduleTriggerExampleWorkflow(scheduletrigger.Deps{
+	wf := scheduletrigger.ExampleWorkflow(scheduletrigger.Deps{
 		EventStreamer: memstreamer.New(),
 		RecordStore:   recordStore,
 		TimeoutStore:  memtimeoutstore.New(),

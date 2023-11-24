@@ -14,8 +14,8 @@ import (
 	"github.com/andrewwormald/workflow/examples/gettingstarted"
 )
 
-func TestGettingStartedWithEnumWorkflow(t *testing.T) {
-	wf := gettingstarted.GettingStartedWithEnumWorkflow(gettingstarted.Deps{
+func TestWorkflowWithEnum(t *testing.T) {
+	wf := gettingstarted.WorkflowWithEnum(gettingstarted.Deps{
 		EventStreamer: memstreamer.New(),
 		RecordStore:   memrecordstore.New(),
 		TimeoutStore:  memtimeoutstore.New(),

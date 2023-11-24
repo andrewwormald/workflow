@@ -8,7 +8,7 @@ import (
 	"github.com/andrewwormald/workflow"
 )
 
-type ScheduleExample struct {
+type Example struct {
 	EmailConfirmed bool
 }
 
@@ -20,10 +20,10 @@ type Deps struct {
 	Clock         clock.Clock
 }
 
-func ScheduleTriggerExampleWorkflow(d Deps) *workflow.Workflow[ScheduleExample, string] {
-	b := workflow.NewBuilder[ScheduleExample, string]("schedule trigger example")
+func ExampleWorkflow(d Deps) *workflow.Workflow[Example, string] {
+	b := workflow.NewBuilder[Example, string]("schedule trigger example")
 
-	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[ScheduleExample, string]) (bool, error) {
+	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[Example, string]) (bool, error) {
 		return true, nil
 	}, "End")
 

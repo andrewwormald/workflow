@@ -11,8 +11,8 @@ import (
 	"github.com/andrewwormald/workflow/examples/kafka"
 )
 
-func TestKafkaExampleWorkflow(t *testing.T) {
-	wf := kafka.KafkaExampleWorkflow()
+func TestExampleWorkflow(t *testing.T) {
+	wf := kafka.ExampleWorkflow()
 	t.Cleanup(wf.Stop)
 
 	ctx := context.Background()

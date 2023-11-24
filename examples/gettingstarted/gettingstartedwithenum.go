@@ -16,7 +16,7 @@ var (
 	StatusCreatedAFunExample Status = "Created a fun example"
 )
 
-func GettingStartedWithEnumWorkflow(d Deps) *workflow.Workflow[GettingStarted, Status] {
+func WorkflowWithEnum(d Deps) *workflow.Workflow[GettingStarted, Status] {
 	b := workflow.NewBuilder[GettingStarted, Status]("getting started")
 
 	b.AddStep(StatusStarted, func(ctx context.Context, r *workflow.Record[GettingStarted, Status]) (bool, error) {

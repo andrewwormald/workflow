@@ -15,11 +15,11 @@ import (
 	"github.com/andrewwormald/workflow/examples/reflex"
 )
 
-func TestReflexExampleWorkflow(t *testing.T) {
+func TestExampleWorkflow(t *testing.T) {
 	dbc := ConnectForTesting(t)
 
 	table := rsql.NewEventsTable("my_events_table", rsql.WithEventMetadataField("metadata"))
-	wf := reflex.ReflexExampleWorkflow(dbc, table, rpatterns.MemCursorStore())
+	wf := reflex.ExampleWorkflow(dbc, table, rpatterns.MemCursorStore())
 	t.Cleanup(wf.Stop)
 
 	ctx := context.Background()

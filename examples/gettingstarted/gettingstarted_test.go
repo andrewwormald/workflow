@@ -14,8 +14,8 @@ import (
 	"github.com/andrewwormald/workflow/examples/gettingstarted"
 )
 
-func TestGettingStartedWorkflow(t *testing.T) {
-	wf := gettingstarted.GettingStartedWorkflow(gettingstarted.Deps{
+func TestWorkflow(t *testing.T) {
+	wf := gettingstarted.Workflow(gettingstarted.Deps{
 		EventStreamer: memstreamer.New(),
 		RecordStore:   memrecordstore.New(),
 		TimeoutStore:  memtimeoutstore.New(),
