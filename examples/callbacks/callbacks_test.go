@@ -15,7 +15,7 @@ import (
 )
 
 func TestCallbackWorkflow(t *testing.T) {
-	wf := callbacks.CallbackExampleWorkflow(callbacks.Deps{
+	wf := callbacks.ExampleWorkflow(callbacks.Deps{
 		EventStreamer: memstreamer.New(),
 		RecordStore:   memrecordstore.New(),
 		TimeoutStore:  memtimeoutstore.New(),
@@ -34,7 +34,7 @@ func TestCallbackWorkflow(t *testing.T) {
 		Confirmed: true,
 	})
 
-	workflow.Require(t, wf, foreignID, runID, "End", callbacks.CallbackExample{
+	workflow.Require(t, wf, foreignID, runID, "End", callbacks.Example{
 		EmailConfirmed: true,
 	})
 }

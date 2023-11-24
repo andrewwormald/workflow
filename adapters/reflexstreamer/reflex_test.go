@@ -1,11 +1,12 @@
 package reflexstreamer_test
 
 import (
+	"testing"
+
 	"github.com/luno/jettison/jtest"
 	"github.com/luno/reflex/rpatterns"
 	"github.com/luno/reflex/rsql"
 	"github.com/stretchr/testify/require"
-	"testing"
 
 	"github.com/andrewwormald/workflow/adapters/reflexstreamer"
 	adapter "github.com/andrewwormald/workflow/adapters/testing"

@@ -1,4 +1,4 @@
-package gettingstarted_test
+package kafka_test
 
 import (
 	"context"
@@ -7,20 +7,12 @@ import (
 	"github.com/luno/jettison/jtest"
 
 	"github.com/andrewwormald/workflow"
-	"github.com/andrewwormald/workflow/adapters/memrecordstore"
-	"github.com/andrewwormald/workflow/adapters/memrolescheduler"
-	"github.com/andrewwormald/workflow/adapters/memstreamer"
-	"github.com/andrewwormald/workflow/adapters/memtimeoutstore"
 	"github.com/andrewwormald/workflow/examples/gettingstarted"
+	"github.com/andrewwormald/workflow/examples/kafka"
 )
 
-func TestWorkflowWithEnum(t *testing.T) {
-	wf := gettingstarted.WorkflowWithEnum(gettingstarted.Deps{
-		EventStreamer: memstreamer.New(),
-		RecordStore:   memrecordstore.New(),
-		TimeoutStore:  memtimeoutstore.New(),
-		RoleScheduler: memrolescheduler.New(),
-	})
+func TestExampleWorkflow(t *testing.T) {
+	wf := kafka.ExampleWorkflow()
 	t.Cleanup(wf.Stop)
 
 	ctx := context.Background()

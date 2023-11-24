@@ -19,7 +19,7 @@ type Deps struct {
 	RoleScheduler workflow.RoleScheduler
 }
 
-func GettingStartedWorkflow(d Deps) *workflow.Workflow[GettingStarted, string] {
+func Workflow(d Deps) *workflow.Workflow[GettingStarted, string] {
 	b := workflow.NewBuilder[GettingStarted, string]("getting started")
 
 	b.AddStep("Started", func(ctx context.Context, r *workflow.Record[GettingStarted, string]) (bool, error) {

@@ -3,14 +3,16 @@ package reflexstreamer
 import (
 	"context"
 	"database/sql"
-	"github.com/andrewwormald/workflow"
+	"io"
+	"strconv"
+	"time"
+
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/reflex"
 	"github.com/luno/reflex/rsql"
-	"io"
-	"strconv"
-	"time"
+
+	"github.com/andrewwormald/workflow"
 )
 
 func New(writer, reader *sql.DB, table *rsql.EventsTable, cursorStore reflex.CursorStore) workflow.EventStreamer {

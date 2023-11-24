@@ -2,8 +2,9 @@ package reflexstreamer_test
 
 import (
 	"database/sql"
-	"github.com/corverroos/truss"
 	"testing"
+
+	"github.com/corverroos/truss"
 )
 
 var tables = []string{

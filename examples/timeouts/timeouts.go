@@ -9,7 +9,7 @@ import (
 	"github.com/andrewwormald/workflow"
 )
 
-type TimeoutExample struct {
+type Example struct {
 	Now time.Time
 }
 
@@ -21,13 +21,13 @@ type Deps struct {
 	Clock         clock.Clock
 }
 
-func TimeoutExampleWorkflow(d Deps) *workflow.Workflow[TimeoutExample, string] {
-	b := workflow.NewBuilder[TimeoutExample, string]("timeout example")
+func ExampleWorkflow(d Deps) *workflow.Workflow[Example, string] {
+	b := workflow.NewBuilder[Example, string]("timeout example")
 
-	b.AddTimeout("Start", func(ctx context.Context, r *workflow.Record[TimeoutExample, string], now time.Time) (time.Time, error) {
+	b.AddTimeout("Start", func(ctx context.Context, r *workflow.Record[Example, string], now time.Time) (time.Time, error) {
 		// Using "now" over time.Now() allows for you to specify a clock for testing.
 		return now.Add(time.Hour), nil
-	}, func(ctx context.Context, r *workflow.Record[TimeoutExample, string], now time.Time) (bool, error) {
+	}, func(ctx context.Context, r *workflow.Record[Example, string], now time.Time) (bool, error) {
 		r.Object.Now = now
 		return true, nil
 	}, "End")
