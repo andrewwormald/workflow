@@ -11,7 +11,7 @@
 
 ## Example
 
-Head on over to ./examples to get familiar with the syntax 😊
+Head on over to `./examples` to get familiar with the syntax 😊
 
 ## Testing
 
