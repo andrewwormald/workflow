@@ -79,7 +79,7 @@ func TestStreamer(t *testing.T, constructor workflow.EventStreamer) {
 	runId, err := wf.Trigger(ctx, foreignID, SyncStatusStarted, workflow.WithInitialValue[User, SyncStatus](&u))
 	jtest.RequireNil(t, err)
 
-	workflow.AwaitTimeoutInsert(t, wf, SyncStatusEmailSet, foreignID, runId)
+	workflow.AwaitTimeoutInsert(t, wf, foreignID, runId, SyncStatusEmailSet)
 
 	clock.Step(time.Hour)
 

@@ -35,7 +35,7 @@ func TestTimeoutWorkflow(t *testing.T) {
 	runID, err := wf.Trigger(ctx, foreignID, "Start")
 	jtest.RequireNil(t, err)
 
-	workflow.AwaitTimeoutInsert(t, wf, "Start", foreignID, runID)
+	workflow.AwaitTimeoutInsert(t, wf, foreignID, runID, "Start")
 
 	clock.Step(time.Hour)
 
