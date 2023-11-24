@@ -2,9 +2,11 @@ package timeouts
 
 import (
 	"context"
-	"github.com/andrewwormald/workflow"
-	"k8s.io/utils/clock"
 	"time"
+
+	"k8s.io/utils/clock"
+
+	"github.com/andrewwormald/workflow"
 )
 
 type TimeoutExample struct {
