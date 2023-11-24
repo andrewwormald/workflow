@@ -2,12 +2,12 @@ package scheduletrigger_test
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
-	clocktesting "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
 	"github.com/luno/jettison/jtest"
+	"github.com/stretchr/testify/require"
+	clocktesting "k8s.io/utils/clock/testing"
 
 	"github.com/andrewwormald/workflow"
 	"github.com/andrewwormald/workflow/adapters/memrecordstore"
