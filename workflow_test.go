@@ -521,6 +521,10 @@ func TestInternalState(t *testing.T) {
 		return true, nil
 	}, "End", workflow.WithParallelCount(3))
 
+	b.AddTimeout("Random", workflow.DurationTimerFunc[string, string](time.Hour), func(ctx context.Context, r *workflow.Record[string, string], now time.Time) (bool, error) {
+		return true, nil
+	}, "End")
+
 	b.ConnectWorkflow(
 		"other workflow",
 		"Completed",
@@ -554,6 +558,8 @@ func TestInternalState(t *testing.T) {
 		"example-middle-to-end-consumer-2-of-3":                             workflow.StateRunning,
 		"example-middle-to-end-consumer-3-of-3":                             workflow.StateRunning,
 		"example-start-to-middle-consumer-1-of-1":                           workflow.StateRunning,
+		"example-random-timeout-auto-inserter-consumer":                     workflow.StateRunning,
+		"example-random-timeout-consumer":                                   workflow.StateRunning,
 		"other_workflow-completed-to-example-end-connector-consumer-1-of-2": workflow.StateRunning,
 		"other_workflow-completed-to-example-end-connector-consumer-2-of-2": workflow.StateRunning,
 	}, wf.States())
@@ -564,6 +570,8 @@ func TestInternalState(t *testing.T) {
 		"example-middle-to-end-consumer-1-of-3":                             workflow.StateShutdown,
 		"example-middle-to-end-consumer-2-of-3":                             workflow.StateShutdown,
 		"example-middle-to-end-consumer-3-of-3":                             workflow.StateShutdown,
+		"example-random-timeout-auto-inserter-consumer":                     workflow.StateShutdown,
+		"example-random-timeout-consumer":                                   workflow.StateShutdown,
 		"other_workflow-completed-to-example-end-connector-consumer-1-of-2": workflow.StateShutdown,
 		"other_workflow-completed-to-example-end-connector-consumer-2-of-2": workflow.StateShutdown,
 	}, wf.States())
