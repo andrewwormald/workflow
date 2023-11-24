@@ -3,12 +3,12 @@ package reflex_test
 import (
 	"context"
 	"database/sql"
-	"github.com/corverroos/truss"
-	"github.com/luno/reflex/rpatterns"
-	"github.com/luno/reflex/rsql"
 	"testing"
 
+	"github.com/corverroos/truss"
 	"github.com/luno/jettison/jtest"
+	"github.com/luno/reflex/rpatterns"
+	"github.com/luno/reflex/rsql"
 
 	"github.com/andrewwormald/workflow"
 	"github.com/andrewwormald/workflow/examples/gettingstarted"

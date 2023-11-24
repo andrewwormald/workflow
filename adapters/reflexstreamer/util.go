@@ -1,8 +1,9 @@
 package reflexstreamer
 
 import (
-	"github.com/luno/reflex"
 	"hash/fnv"
+
+	"github.com/luno/reflex"
 )
 
 type EventType int

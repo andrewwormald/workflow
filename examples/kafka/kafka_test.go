@@ -2,11 +2,13 @@ package kafka_test
 
 import (
 	"context"
+	"testing"
+
+	"github.com/luno/jettison/jtest"
+
 	"github.com/andrewwormald/workflow"
 	"github.com/andrewwormald/workflow/examples/gettingstarted"
 	"github.com/andrewwormald/workflow/examples/kafka"
-	"github.com/luno/jettison/jtest"
-	"testing"
 )
 
 func TestKafkaExampleWorkflow(t *testing.T) {
