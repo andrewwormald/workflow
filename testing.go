@@ -5,9 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"testing"
+
 	"github.com/luno/jettison/jtest"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TriggerCallbackOn[Type any, Status ~string, Payload any](t *testing.T, w *Workflow[Type, Status], foreignID, runID string, waitFor Status, p Payload) {
