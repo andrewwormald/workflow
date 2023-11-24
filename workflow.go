@@ -45,6 +45,7 @@ type API[Type any, Status ~string] interface {
 type Workflow[Type any, Status ~string] struct {
 	Name string
 
+	ctx    context.Context
 	cancel context.CancelFunc
 
 	clock                   clock.Clock
@@ -81,6 +82,7 @@ func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 	// Ensure that the background consumers are only initialized once
 	w.once.Do(func() {
 		ctx, cancel := context.WithCancel(ctx)
+		w.ctx = ctx
 		w.cancel = cancel
 		w.calledRun = true
 
@@ -125,8 +127,7 @@ func (w *Workflow[Type, Status]) Stop() {
 
 	for {
 		var runningProcesses int
-		states := w.States()
-		for _, state := range states {
+		for _, state := range w.States() {
 			switch state {
 			case StateUnknown, StateShutdown:
 				continue

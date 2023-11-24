@@ -40,6 +40,22 @@ type Store struct {
 	timeouts           []*workflow.Timeout
 }
 
+func (s *Store) List(ctx context.Context, workflowName string) ([]workflow.Timeout, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var ls []workflow.Timeout
+	for _, timeout := range s.timeouts {
+		if timeout.WorkflowName != workflowName {
+			continue
+		}
+
+		ls = append(ls, *timeout)
+	}
+
+	return ls, nil
+}
+
 func (s *Store) Create(ctx context.Context, workflowName, foreignID, runID, status string, expireAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

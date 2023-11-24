@@ -14,5 +14,6 @@ type TimeoutStore interface {
 	Create(ctx context.Context, workflowName, foreignID, runID, status string, expireAt time.Time) error
 	Complete(ctx context.Context, workflowName, foreignID, runID, status string) error
 	Cancel(ctx context.Context, workflowName, foreignID, runID, status string) error
+	List(ctx context.Context, workflowName string) ([]Timeout, error)
 	ListValid(ctx context.Context, workflowName string, status string, now time.Time) ([]Timeout, error)
 }
