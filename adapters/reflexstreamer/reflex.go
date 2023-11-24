@@ -91,18 +91,13 @@ func (c constructor) NewConsumer(topic string, name string, opts ...workflow.Con
 		pollFrequency = copts.PollFrequency
 	}
 
-	var ropts []reflex.StreamOption
-	if copts.StreamFromLatest {
-		ropts = append(ropts, reflex.WithStreamFromHead())
-	}
-
 	table := c.eventsTable.Clone(rsql.WithEventsBackoff(pollFrequency))
 	return &Consumer{
 		topic:   topic,
 		name:    name,
 		cursor:  c.cursorStore,
 		reader:  c.reader,
-		stream:  table.ToStream(c.reader, ropts...),
+		stream:  table.ToStream(c.reader),
 		options: copts,
 	}
 }

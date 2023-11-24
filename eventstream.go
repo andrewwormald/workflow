@@ -28,11 +28,8 @@ type Consumer interface {
 type Ack func() error
 
 type ConsumerOptions struct {
-	PollFrequency    time.Duration
-	LagAlert         time.Duration
-	RetryCount       int
-	StreamFromLatest bool
-	EventFilter      EventFilter
+	PollFrequency time.Duration
+	EventFilter   EventFilter
 }
 
 // EventFilter can be passed to the event streaming implementation to allow specific consumers to have an
@@ -50,24 +47,6 @@ func WithEventFilter(ef EventFilter) ConsumerOption {
 func WithConsumerPollFrequency(d time.Duration) ConsumerOption {
 	return func(opt *ConsumerOptions) {
 		opt.PollFrequency = d
-	}
-}
-
-func WithConsumerLagAlert(d time.Duration) ConsumerOption {
-	return func(opt *ConsumerOptions) {
-		opt.LagAlert = d
-	}
-}
-
-func WithConsumerDLQ(retryCount int) ConsumerOption {
-	return func(opt *ConsumerOptions) {
-		opt.RetryCount = retryCount
-	}
-}
-
-func WithConsumerStreamFromLatest() ConsumerOption {
-	return func(opt *ConsumerOptions) {
-		opt.StreamFromLatest = true
 	}
 }
 
