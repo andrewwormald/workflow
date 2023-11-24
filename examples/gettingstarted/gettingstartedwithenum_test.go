@@ -30,16 +30,16 @@ func TestGettingStartedWithEnumWorkflow(t *testing.T) {
 	runID, err := wf.Trigger(ctx, foreignID, gettingstarted.StatusStarted)
 	jtest.RequireNil(t, err)
 
-	workflow.Require(t, wf, gettingstarted.StatusReadTheDocs, foreignID, runID, gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, runID, gettingstarted.StatusReadTheDocs, gettingstarted.GettingStarted{
 		ReadTheDocs: "✅",
 	})
 
-	workflow.Require(t, wf, gettingstarted.StatusFollowedTheExample, foreignID, runID, gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, runID, gettingstarted.StatusFollowedTheExample, gettingstarted.GettingStarted{
 		ReadTheDocs:     "✅",
 		FollowAnExample: "✅",
 	})
 
-	workflow.Require(t, wf, gettingstarted.StatusCreatedAFunExample, foreignID, runID, gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, runID, gettingstarted.StatusCreatedAFunExample, gettingstarted.GettingStarted{
 		ReadTheDocs:       "✅",
 		FollowAnExample:   "✅",
 		CreateAFunExample: "✅",

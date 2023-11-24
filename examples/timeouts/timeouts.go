@@ -21,7 +21,7 @@ type Deps struct {
 	Clock         clock.Clock
 }
 
-func TimeoutWorkflow(d Deps) *workflow.Workflow[TimeoutExample, string] {
+func TimeoutExampleWorkflow(d Deps) *workflow.Workflow[TimeoutExample, string] {
 	b := workflow.NewBuilder[TimeoutExample, string]("timeout example")
 
 	b.AddTimeout("Start", func(ctx context.Context, r *workflow.Record[TimeoutExample, string], now time.Time) (time.Time, error) {

@@ -28,7 +28,7 @@ func TriggerCallbackOn[Type any, Status ~string, Payload any](t *testing.T, w *W
 	jtest.RequireNil(t, err)
 }
 
-func AwaitTimeoutInsert[Type any, Status ~string](t *testing.T, w *Workflow[Type, Status], status Status, foreignID, runID string) {
+func AwaitTimeoutInsert[Type any, Status ~string](t *testing.T, w *Workflow[Type, Status], foreignID, runID string, waitFor Status) {
 	if t == nil {
 		panic("AwaitTimeout can only be used for testing")
 	}
@@ -43,7 +43,7 @@ func AwaitTimeoutInsert[Type any, Status ~string](t *testing.T, w *Workflow[Type
 		jtest.RequireNil(t, err)
 
 		for _, l := range ls {
-			if l.Status != string(status) {
+			if l.Status != string(waitFor) {
 				continue
 			}
 
@@ -61,19 +61,19 @@ func AwaitTimeoutInsert[Type any, Status ~string](t *testing.T, w *Workflow[Type
 	}
 }
 
-func Require[Type any, Status ~string](t *testing.T, w *Workflow[Type, Status], status Status, foreignID, runID string, expected Type) {
+func Require[Type any, Status ~string](t *testing.T, w *Workflow[Type, Status], foreignID, runID string, waitFor Status, expected Type) {
 	if t == nil {
 		panic("Require can only be used for testing")
 	}
 
-	_, ok := w.validStatuses[status]
+	_, ok := w.validStatuses[waitFor]
 	if !ok {
-		t.Error(fmt.Sprintf(`Status provided is not configured for workflow: "%v" (Workflow: %v)`, status, w.Name))
+		t.Error(fmt.Sprintf(`Status provided is not configured for workflow: "%v" (Workflow: %v)`, waitFor, w.Name))
 		return
 	}
 
 	ctx := context.TODO()
-	actual, err := w.Await(ctx, foreignID, runID, status)
+	actual, err := w.Await(ctx, foreignID, runID, waitFor)
 	jtest.RequireNil(t, err)
 
 	require.Equal(t, expected, *actual.Object)
