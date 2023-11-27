@@ -14,6 +14,7 @@ func TestTimeoutStore(t *testing.T, factory func() workflow.TimeoutStore) {
 	tests := []func(t *testing.T, store workflow.TimeoutStore){
 		testCancelTimeout,
 		testCompleteTimeout,
+		testListTimeout,
 	}
 
 	for _, test := range tests {
@@ -152,4 +153,22 @@ func testCompleteTimeout(t *testing.T, store workflow.TimeoutStore) {
 	require.False(t, timeout[1].Completed)
 	require.WithinDuration(t, time.Now().Add(-time.Hour), timeout[1].ExpireAt, time.Second)
 	require.WithinDuration(t, time.Now(), timeout[1].CreatedAt, time.Second)
+}
+
+func testListTimeout(t *testing.T, store workflow.TimeoutStore) {
+	ctx := context.Background()
+
+	err := store.Create(ctx, "example", "andrew", "1", "Started", time.Now().Add(-time.Hour))
+	jtest.RequireNil(t, err)
+
+	err = store.Create(ctx, "example", "andrew", "2", "Middle", time.Now().Add(time.Hour))
+	jtest.RequireNil(t, err)
+
+	err = store.Create(ctx, "example", "andrew", "3", "Completed", time.Now().Add(time.Hour*2))
+	jtest.RequireNil(t, err)
+
+	timeout, err := store.List(ctx, "example")
+	jtest.RequireNil(t, err)
+
+	require.Equal(t, 3, len(timeout))
 }
