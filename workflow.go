@@ -131,7 +131,10 @@ func (w *Workflow[Type, Status]) run(role string, process func(ctx context.Conte
 
 	for {
 		ctx, cancel, err := w.scheduler.Await(w.ctx, role)
-		if err != nil {
+		if errors.IsAny(err, context.Canceled) {
+			// Exit cleanly if error returned is cancellation of context
+			return
+		} else if err != nil {
 			log.Error(ctx, errors.Wrap(err, "error awaiting role", j.MKV{
 				"role": role,
 			}))
