@@ -3,8 +3,6 @@ package workflow
 import (
 	"context"
 	"github.com/luno/jettison/errors"
-	"github.com/luno/jettison/j"
-	"github.com/luno/jettison/log"
 	"time"
 )
 
@@ -114,66 +112,18 @@ type timeout[Type any, Status ~string] struct {
 }
 
 func timeoutPoller[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
-	if w.debugMode {
-		log.Info(ctx, "launched timeout consumer", j.MKV{
-			"workflow_name": w.Name,
-			"for":           status,
-		})
-	}
-
 	role := makeRole(w.Name, string(status), "timeout-consumer")
 
-	w.updateState(role, StateIdle)
-	defer w.updateState(role, StateShutdown)
-
-	for {
-		ctx, cancel, err := w.scheduler.Await(ctx, role)
-		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout auto inserter consumer error"))
-		}
-
-		w.updateState(role, StateRunning)
-
-		err = pollTimeouts(ctx, w, status, timeouts)
-		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
-			cancel()
-			return
-		} else if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout consumer error"))
-		}
-
-		select {
-		case <-ctx.Done():
-			cancel()
-			return
-		case <-time.After(timeouts.ErrBackOff):
-			cancel()
-		}
-	}
+	w.run(role, func(ctx context.Context) error {
+		return pollTimeouts(ctx, w, status, timeouts)
+	}, timeouts.ErrBackOff)
 }
 
 func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
-	if w.debugMode {
-		log.Info(ctx, "launched timeout auto inserter consumer", j.MKV{
-			"workflow_name": w.Name,
-			"for":           status,
-		})
-	}
-
 	role := makeRole(w.Name, string(status), "timeout-auto-inserter-consumer")
 
-	w.updateState(role, StateIdle)
-	defer w.updateState(role, StateShutdown)
-
-	for {
-		ctx, cancel, err := w.scheduler.Await(ctx, role)
-		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout auto inserter consumer error"))
-		}
-
-		w.updateState(role, StateRunning)
-
-		cunsumerFunc := func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
+	w.run(role, func(ctx context.Context) error {
+		consumerFunc := func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
 			for _, config := range timeouts.Transitions {
 				expireAt, err := config.TimerFunc(ctx, r, w.clock.Now())
 				if err != nil {
@@ -195,10 +145,10 @@ func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, 
 			return false, nil
 		}
 
-		err = runStepConsumerForever(ctx, w, consumerConfig[Type, Status]{
+		return runStepConsumerForever(ctx, w, consumerConfig[Type, Status]{
 			PollingFrequency: timeouts.PollingFrequency,
 			ErrBackOff:       timeouts.ErrBackOff,
-			Consumer:         cunsumerFunc,
+			Consumer:         consumerFunc,
 			ParallelCount:    1,
 		},
 			status,
@@ -206,25 +156,7 @@ func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, 
 			1,
 			1,
 		)
-		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
-			if w.debugMode {
-				log.Info(ctx, "shutting down timeout auto inserter consumer", j.MKV{
-					"workflow_name": w.Name,
-					"status":        status,
-				})
-			}
-		} else if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout auto inserter consumer error"))
-		}
-
-		select {
-		case <-ctx.Done():
-			cancel()
-			return
-		case <-time.After(timeouts.ErrBackOff):
-			cancel()
-		}
-	}
+	}, timeouts.ErrBackOff)
 }
 
 // TimerFunc exists to allow the specification of when the timeout should expire dynamically. If not time is set then a

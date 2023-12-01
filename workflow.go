@@ -2,6 +2,9 @@ package workflow
 
 import (
 	"context"
+	"github.com/luno/jettison/errors"
+	"github.com/luno/jettison/j"
+	"github.com/luno/jettison/log"
 	"io"
 	"sync"
 	"time"
@@ -21,8 +24,10 @@ type API[Type any, Status ~string] interface {
 	// was run.
 	Trigger(ctx context.Context, foreignID string, startingStatus Status, opts ...TriggerOption[Type, Status]) (runID string, err error)
 
-	// ScheduleTrigger takes a cron spec and will call Trigger at the specified intervals. The same options are
-	// available for ScheduleTrigger than they are for Trigger.
+	// ScheduleTrigger takes a cron spec and will call Trigger at the specified intervals. ScheduleTrigger is a blocking
+	// call and will return ErrWorkflowNotRunning or ErrStatusProvidedNotConfigured to indicate that it cannot begin to
+	// schedule. All schedule errors will be retried indefinitely. The same options are available for ScheduleTrigger
+	// as they are for Trigger.
 	ScheduleTrigger(ctx context.Context, foreignID string, startingStatus Status, spec string, opts ...TriggerOption[Type, Status]) error
 
 	// Await is a blocking call that returns the typed Record when the workflow of the specified run ID reaches the
@@ -90,11 +95,11 @@ func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 			for _, p := range consumers {
 				if p.ParallelCount < 2 {
 					// Launch all consumers in runners
-					go consumer(ctx, w, currentStatus, p, 1, 1)
+					go consumer(w, currentStatus, p, 1, 1)
 				} else {
 					// Run as sharded parallel consumers
 					for i := 1; i <= p.ParallelCount; i++ {
-						go consumer(ctx, w, currentStatus, p, i, p.ParallelCount)
+						go consumer(w, currentStatus, p, i, p.ParallelCount)
 					}
 				}
 			}
@@ -108,15 +113,66 @@ func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 		for _, config := range w.connectorConfigs {
 			if config.parallelCount < 2 {
 				// Launch all consumers in runners
-				go connectorConsumer(ctx, w, &config, 1, 1)
+				go connectorConsumer(w, &config, 1, 1)
 			} else {
 				// Run as sharded parallel consumers
 				for i := 1; i <= config.parallelCount; i++ {
-					go connectorConsumer(ctx, w, &config, i, config.parallelCount)
+					go connectorConsumer(w, &config, i, config.parallelCount)
 				}
 			}
 		}
 	})
+}
+
+// run is a standardise way of running blocking calls forever with retry such as consumers that need to adhere to role scheduling
+func (w *Workflow[Type, Status]) run(role string, process func(ctx context.Context) error, errBackOff time.Duration) {
+	w.updateState(role, StateIdle)
+	defer w.updateState(role, StateShutdown)
+
+	for {
+		ctx, cancel, err := w.scheduler.Await(w.ctx, role)
+		if err != nil {
+			log.Error(ctx, errors.Wrap(err, "error awaiting role", j.MKV{
+				"role": role,
+			}))
+			time.Sleep(errBackOff)
+			continue
+		}
+
+		w.updateState(role, StateRunning)
+
+		if ctx.Err() != nil {
+			// Gracefully exit when context has been cancelled
+			if w.debugMode {
+				log.Error(ctx, errors.Wrap(err, "shutting down", j.MKV{
+					"role": role,
+				}))
+			}
+			return
+		}
+
+		err = process(ctx)
+		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
+			// Exit the process if ErrWorkflowShutdown or context.Canceled is returned
+			return
+		} else if err != nil {
+			log.Error(ctx, errors.Wrap(err, "process error", j.MKV{
+				"role": role,
+			}))
+		} else if err == nil {
+			// If process finishes successfully then release the role by cancelling the context can continuing.
+			cancel()
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			cancel()
+			continue
+		case <-time.After(errBackOff):
+			cancel()
+		}
+	}
 }
 
 // Stop cancels the context provided to all the background processes that the workflow launched and waits for all of

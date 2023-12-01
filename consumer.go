@@ -24,15 +24,7 @@ type consumerConfig[Type any, Status ~string] struct {
 	ParallelCount     int
 }
 
-func consumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], currentStatus Status, p consumerConfig[Type, Status], shard, totalShards int) {
-	if w.debugMode {
-		log.Info(ctx, "launched consumer", j.MKV{
-			"workflow_name": w.Name,
-			"from":          currentStatus,
-			"to":            p.DestinationStatus,
-		})
-	}
-
+func consumer[Type any, Status ~string](w *Workflow[Type, Status], currentStatus Status, p consumerConfig[Type, Status], shard, totalShards int) {
 	role := makeRole(
 		w.Name,
 		string(currentStatus),
@@ -44,39 +36,8 @@ func consumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, S
 		fmt.Sprintf("%v", totalShards),
 	)
 
-	w.updateState(role, StateIdle)
-	defer w.updateState(role, StateShutdown)
-
-	for {
-		ctx, cancel, err := w.scheduler.Await(ctx, role)
-		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "consumer error"))
-		}
-
-		w.updateState(role, StateRunning)
-
-		if w.debugMode {
-			log.Info(ctx, "consumer obtained role", j.MKV{
-				"role": role,
-			})
-		}
-
-		if ctx.Err() != nil {
-			// Gracefully exit when context has been cancelled
-			if w.debugMode {
-				log.Info(ctx, "shutting down consumer", j.MKV{
-					"workflow_name":      w.Name,
-					"current_status":     currentStatus,
-					"destination_status": p.DestinationStatus,
-					"shard":              shard,
-					"total_shards":       totalShards,
-					"role":               role,
-				})
-			}
-			return
-		}
-
-		err = runStepConsumerForever[Type, Status](ctx, w, p, currentStatus, role, shard, totalShards)
+	w.run(role, func(ctx context.Context) error {
+		err := runStepConsumerForever[Type, Status](ctx, w, p, currentStatus, role, shard, totalShards)
 		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
 			if w.debugMode {
 				log.Info(ctx, "shutting down consumer", j.MKV{
@@ -89,21 +50,8 @@ func consumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, S
 			log.Error(ctx, errors.Wrap(err, "consumer error"))
 		}
 
-		select {
-		case <-ctx.Done():
-			cancel()
-			if w.debugMode {
-				log.Info(ctx, "shutting down consumer", j.MKV{
-					"workflow_name":      w.Name,
-					"current_status":     currentStatus,
-					"destination_status": p.DestinationStatus,
-				})
-			}
-			return
-		case <-time.After(p.ErrBackOff):
-			cancel()
-		}
-	}
+		return nil
+	}, p.ErrBackOff)
 }
 
 func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], p consumerConfig[Type, Status], status Status, role string, shard, totalShards int) error {

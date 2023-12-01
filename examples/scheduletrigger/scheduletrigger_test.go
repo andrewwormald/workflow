@@ -36,7 +36,7 @@ func TestExampleWorkflow(t *testing.T) {
 	foreignID := "hourly-run"
 
 	go func() {
-		err := wf.ScheduleTrigger(ctx, foreignID, "Start", "@hourly")
+		err := wf.ScheduleTrigger(foreignID, "Start", "@hourly")
 		jtest.RequireNil(t, err)
 	}()
 
