@@ -100,7 +100,20 @@ func (w *Workflow[Type, Status]) ScheduleTrigger(ctx context.Context, foreignID 
 	for {
 		ctx, cancel, err := w.scheduler.Await(ctx, role)
 		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "timeout auto inserter consumer error"))
+			log.Error(ctx, errors.Wrap(err, "schedule trigger error - awaiting role"))
+			continue
+		}
+
+		if ctx.Err() != nil {
+			// Gracefully exit when context has been cancelled
+			if w.debugMode {
+				log.Info(ctx, "shutting down scheduled trigger", j.MKV{
+					"workflow_name":   w.Name,
+					"starting_status": startingStatus,
+					"role":            role,
+				})
+			}
+			return nil
 		}
 
 		latestEntry, err := w.recordStore.Latest(ctx, w.Name, foreignID)

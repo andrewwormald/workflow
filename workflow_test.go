@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -385,6 +386,42 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	jtest.RequireNil(t, err)
 
 	require.NotEqual(t, firstScheduled.RunID, secondScheduled.RunID)
+}
+
+func TestWorkflow_ScheduleTriggerShutdown(t *testing.T) {
+	b := workflow.NewBuilder[MyType, string]("sync users")
+	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+		return true, nil
+	}, "End")
+
+	wf := b.Build(
+		memstreamer.New(),
+		memrecordstore.New(),
+		memtimeoutstore.New(),
+		memrolescheduler.New(),
+		workflow.WithDebugMode(),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	wf.Run(ctx)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		err := wf.ScheduleTrigger(ctx, "andrew", "Started", "@monthly")
+		jtest.RequireNil(t, err)
+		wg.Done()
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Cancel the context which should cancel the context and cause the schedule trigger to safely exit.
+	cancel()
+
+	// Wait until the scheduler safely exits
+	wg.Done()
 }
 
 func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
