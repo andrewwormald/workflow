@@ -353,7 +353,7 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	wf.Run(ctx)
 
 	go func() {
-		err := wf.ScheduleTrigger(ctx, "andrew", "Started", "@monthly")
+		err := wf.ScheduleTrigger("andrew", "Started", "@monthly")
 		jtest.RequireNil(t, err)
 	}()
 
@@ -389,7 +389,7 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 }
 
 func TestWorkflow_ScheduleTriggerShutdown(t *testing.T) {
-	b := workflow.NewBuilder[MyType, string]("sync users")
+	b := workflow.NewBuilder[MyType, string]("example")
 	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
 		return true, nil
 	}, "End")
@@ -410,18 +410,26 @@ func TestWorkflow_ScheduleTriggerShutdown(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		err := wf.ScheduleTrigger(ctx, "andrew", "Started", "@monthly")
-		jtest.RequireNil(t, err)
 		wg.Done()
+		err := wf.ScheduleTrigger("andrew", "Started", "@monthly")
+		jtest.RequireNil(t, err)
 	}()
+
+	wg.Wait()
 
 	time.Sleep(200 * time.Millisecond)
 
-	// Cancel the context which should cancel the context and cause the schedule trigger to safely exit.
-	cancel()
+	require.Equal(t, map[string]workflow.State{
+		"example-Started-andrew-scheduler-@monthly": workflow.StateRunning,
+		"example-started-to-end-consumer-1-of-1":    workflow.StateRunning,
+	}, wf.States())
 
-	// Wait until the scheduler safely exits
-	wg.Done()
+	wf.Stop()
+
+	require.Equal(t, map[string]workflow.State{
+		"example-Started-andrew-scheduler-@monthly": workflow.StateShutdown,
+		"example-started-to-end-consumer-1-of-1":    workflow.StateShutdown,
+	}, wf.States())
 }
 
 func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
@@ -451,7 +459,7 @@ func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
 	_, err := wf.Trigger(ctx, "andrew", "Started")
 	jtest.Require(t, workflow.ErrWorkflowNotRunning, err)
 
-	err = wf.ScheduleTrigger(ctx, "andrew", "Started", "@monthly")
+	err = wf.ScheduleTrigger("andrew", "Started", "@monthly")
 	jtest.Require(t, workflow.ErrWorkflowNotRunning, err)
 }
 

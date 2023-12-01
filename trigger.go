@@ -80,7 +80,7 @@ func (w *Workflow[Type, Status]) Trigger(ctx context.Context, foreignID string, 
 	return runID, nil
 }
 
-func (w *Workflow[Type, Status]) ScheduleTrigger(ctx context.Context, foreignID string, startingStatus Status, spec string, opts ...TriggerOption[Type, Status]) error {
+func (w *Workflow[Type, Status]) ScheduleTrigger(foreignID string, startingStatus Status, spec string, opts ...TriggerOption[Type, Status]) error {
 	if !w.calledRun {
 		return errors.Wrap(ErrWorkflowNotRunning, "ensure Run() is called before attempting to trigger the workflow")
 	}
@@ -97,12 +97,17 @@ func (w *Workflow[Type, Status]) ScheduleTrigger(ctx context.Context, foreignID 
 
 	role := strings.Join([]string{w.Name, string(startingStatus), foreignID, "scheduler", spec}, "-")
 
+	w.updateState(role, StateIdle)
+	defer w.updateState(role, StateShutdown)
+
 	for {
-		ctx, cancel, err := w.scheduler.Await(ctx, role)
+		ctx, cancel, err := w.scheduler.Await(w.ctx, role)
 		if err != nil {
 			log.Error(ctx, errors.Wrap(err, "schedule trigger error - awaiting role"))
 			continue
 		}
+
+		w.updateState(role, StateRunning)
 
 		if ctx.Err() != nil {
 			// Gracefully exit when context has been cancelled
