@@ -113,11 +113,11 @@ func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 		for _, config := range w.connectorConfigs {
 			if config.parallelCount < 2 {
 				// Launch all consumers in runners
-				go connectorConsumer(ctx, w, &config, 1, 1)
+				go connectorConsumer(w, &config, 1, 1)
 			} else {
 				// Run as sharded parallel consumers
 				for i := 1; i <= config.parallelCount; i++ {
-					go connectorConsumer(ctx, w, &config, i, config.parallelCount)
+					go connectorConsumer(w, &config, i, config.parallelCount)
 				}
 			}
 		}

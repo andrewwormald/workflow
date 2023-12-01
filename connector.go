@@ -3,9 +3,10 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
-	"time"
 )
 
 // ConnectorFilter should return an empty string as the foreignID if the event should be filtered out / skipped, and
@@ -27,7 +28,7 @@ type connectorConfig[Type any, Status ~string] struct {
 	parallelCount    int
 }
 
-func connectorConsumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], cc *connectorConfig[Type, Status], shard, totalShards int) {
+func connectorConsumer[Type any, Status ~string](w *Workflow[Type, Status], cc *connectorConfig[Type, Status], shard, totalShards int) {
 	role := makeRole(
 		cc.workflowName,
 		cc.status,
