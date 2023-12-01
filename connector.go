@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
-	"github.com/luno/jettison/log"
 	"time"
 )
 
@@ -29,15 +28,6 @@ type connectorConfig[Type any, Status ~string] struct {
 }
 
 func connectorConsumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], cc *connectorConfig[Type, Status], shard, totalShards int) {
-	if w.debugMode {
-		log.Info(ctx, "launched connector consumer", j.MKV{
-			"external_workflow_name": cc.workflowName,
-			"from":                   cc.status,
-			"workflow_name":          w.Name,
-			"to":                     cc.to,
-		})
-	}
-
 	role := makeRole(
 		cc.workflowName,
 		cc.status,
@@ -51,12 +41,14 @@ func connectorConsumer[Type any, Status ~string](ctx context.Context, w *Workflo
 		fmt.Sprintf("%v", totalShards),
 	)
 
-	w.updateState(role, StateIdle)
-	defer w.updateState(role, StateShutdown)
-
 	pollFrequency := w.defaultPollingFrequency
 	if cc.pollingFrequency.Nanoseconds() != 0 {
 		pollFrequency = cc.pollingFrequency
+	}
+
+	errBackOff := w.defaultErrBackOff
+	if cc.errBackOff.Nanoseconds() != 0 {
+		errBackOff = cc.errBackOff
 	}
 
 	topic := Topic(cc.workflowName, cc.status)
@@ -70,50 +62,9 @@ func connectorConsumer[Type any, Status ~string](ctx context.Context, w *Workflo
 	)
 	defer stream.Close()
 
-	for {
-		ctx, cancel, err := w.scheduler.Await(ctx, role)
-		if err != nil {
-			log.Error(ctx, errors.Wrap(err, "consumer error"))
-		}
-
-		w.updateState(role, StateRunning)
-
-		if w.debugMode {
-			log.Info(ctx, "connector consumer obtained role", j.MKV{
-				"role": role,
-			})
-		}
-
-		err = consumeExternalWorkflow[Type, Status](ctx, stream, w, cc.filter, cc.consumer, cc.to)
-		if errors.IsAny(err, ErrWorkflowShutdown, context.Canceled) {
-			if w.debugMode {
-				log.Info(ctx, "shutting down connector consumer", j.MKV{
-					"external_workflow_name": cc.workflowName,
-					"current_status":         cc.status,
-					"workflow_name":          w.Name,
-					"destination_status":     cc.status,
-				})
-			}
-		} else if err != nil {
-			log.Error(ctx, errors.Wrap(err, "connector consumer error"))
-		}
-
-		select {
-		case <-ctx.Done():
-			cancel()
-			if w.debugMode {
-				log.Info(ctx, "shutting down connector consumer", j.MKV{
-					"external_workflow_name": cc.workflowName,
-					"status":                 cc.status,
-					"workflow_name":          w.Name,
-					"destination_status":     cc.to,
-				})
-			}
-			return
-		case <-time.After(cc.errBackOff):
-			cancel()
-		}
-	}
+	w.run(role, func(ctx context.Context) error {
+		return consumeExternalWorkflow[Type, Status](ctx, stream, w, cc.filter, cc.consumer, cc.to)
+	}, errBackOff)
 }
 
 func consumeExternalWorkflow[Type any, Status ~string](ctx context.Context, stream Consumer, w *Workflow[Type, Status], filter ConnectorFilter, consumerFunc ConnectorConsumerFunc[Type, Status], to string) error {
