@@ -8,6 +8,14 @@ import (
 type RoleScheduler struct {
 	mu    sync.Mutex
 	roles map[string]*sync.Mutex
+
+	cancels []context.CancelFunc
+}
+
+func (r *RoleScheduler) Stop(ctx context.Context) {
+	for _, cancel := range r.cancels {
+		cancel()
+	}
 }
 
 func (r *RoleScheduler) Await(ctx context.Context, role string) (context.Context, context.CancelFunc, error) {
@@ -15,6 +23,7 @@ func (r *RoleScheduler) Await(ctx context.Context, role string) (context.Context
 
 	// Lock the main mutex whilst checking and potentially creating new role mutexes
 	r.mu.Lock()
+	r.cancels = append(r.cancels, cancel)
 	mu, ok := r.roles[role]
 	if !ok {
 		mu = &sync.Mutex{}

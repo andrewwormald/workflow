@@ -12,6 +12,7 @@ import (
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/jtest"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 	clock_testing "k8s.io/utils/clock/testing"
 
 	"github.com/andrewwormald/workflow"
@@ -324,6 +325,8 @@ func TestNot(t *testing.T) {
 }
 
 func TestWorkflow_ScheduleTrigger(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	b := workflow.NewBuilder[MyType, string]("sync users")
 	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
 		return true, nil
@@ -388,6 +391,8 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 }
 
 func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	b := workflow.NewBuilder[MyType, string]("sync users")
 
 	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
@@ -419,6 +424,8 @@ func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
 }
 
 func TestWorkflow_TestingRequire(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	b := workflow.NewBuilder[MyType, string]("sync users")
 
 	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
@@ -463,6 +470,8 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 }
 
 func TestTimeTimerFunc(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	type YinYang struct {
 		Yin  bool
 		Yang bool
@@ -512,6 +521,8 @@ func TestTimeTimerFunc(t *testing.T) {
 }
 
 func TestInternalState(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	b := workflow.NewBuilder[string, string]("example")
 	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[string, string]) (bool, error) {
 		return true, nil
@@ -578,6 +589,8 @@ func TestInternalState(t *testing.T) {
 }
 
 func TestConnectStream(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	ctx := context.Background()
 	streamerA := memstreamer.New()
 
@@ -662,6 +675,8 @@ func TestConnectStream(t *testing.T) {
 }
 
 func TestConnectStreamParallelConsumer(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	ctx := context.Background()
 	streamerA := memstreamer.New()
 

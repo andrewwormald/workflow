@@ -7,6 +7,7 @@ import (
 
 type RoleScheduler interface {
 	Await(ctx context.Context, role string) (context.Context, context.CancelFunc, error)
+	Stop(ctx context.Context)
 }
 
 func makeRole(inputs ...string) string {

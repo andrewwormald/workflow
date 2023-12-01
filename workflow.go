@@ -78,6 +78,7 @@ type Workflow[Type any, Status ~string] struct {
 	debugMode bool
 }
 
+// Run starts the consumers necessary for the workflow to run. Once Run is called all subsequent calls to Run are no-op.
 func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 	// Ensure that the background consumers are only initialized once
 	w.once.Do(func() {

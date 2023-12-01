@@ -2,6 +2,7 @@ package testing
 
 import (
 	"context"
+	"go.uber.org/goleak"
 	clock_testing "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
@@ -32,6 +33,8 @@ type User struct {
 }
 
 func TestStreamer(t *testing.T, constructor workflow.EventStreamer) {
+	defer goleak.VerifyNone(t)
+
 	b := workflow.NewBuilder[User, SyncStatus]("sync user 2")
 	b.AddStep(
 		SyncStatusStarted,
