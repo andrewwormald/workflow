@@ -2,9 +2,11 @@ package workflow
 
 import (
 	"context"
-	"k8s.io/utils/clock"
+	"fmt"
 	"path"
 	"time"
+
+	"k8s.io/utils/clock"
 )
 
 func NewBuilder[Type any, Status ~string](name string) *Builder[Type, Status] {
@@ -17,6 +19,7 @@ func NewBuilder[Type any, Status ~string](name string) *Builder[Type, Status] {
 			consumers:               make(map[Status][]consumerConfig[Type, Status]),
 			callback:                make(map[Status][]callback[Type, Status]),
 			timeouts:                make(map[Status]timeouts[Type, Status]),
+			graph:                   make(map[Status][]Status),
 			validStatuses:           make(map[Status]bool),
 			internalState:           make(map[string]State),
 		},
@@ -52,6 +55,8 @@ func (b *Builder[Type, Status]) AddStep(from Status, c ConsumerFunc[Type, Status
 		p.ErrBackOff = so.errBackOff
 	}
 
+	b.workflow.graph[from] = append(b.workflow.graph[from], to)
+	b.workflow.graphOrder = append(b.workflow.graphOrder, from)
 	b.workflow.validStatuses[from] = true
 	b.workflow.validStatuses[to] = true
 	b.workflow.consumers[from] = append(b.workflow.consumers[from], p)
@@ -89,6 +94,8 @@ func (b *Builder[Type, Status]) AddCallback(from Status, fn CallbackFunc[Type, S
 		CallbackFunc:      fn,
 	}
 
+	b.workflow.graph[from] = append(b.workflow.graph[from], to)
+	b.workflow.graphOrder = append(b.workflow.graphOrder, from)
 	b.workflow.validStatuses[from] = true
 	b.workflow.validStatuses[to] = true
 	b.workflow.callback[from] = append(b.workflow.callback[from], c)
@@ -139,6 +146,8 @@ func (b *Builder[Type, Status]) AddTimeout(from Status, timer TimerFunc[Type, St
 
 	timeouts.Transitions = append(timeouts.Transitions, t)
 
+	b.workflow.graph[from] = append(b.workflow.graph[from], to)
+	b.workflow.graphOrder = append(b.workflow.graphOrder, from)
 	b.workflow.validStatuses[from] = true
 	b.workflow.validStatuses[to] = true
 	b.workflow.timeouts[from] = timeouts
@@ -149,6 +158,10 @@ func (b *Builder[Type, Status]) ConnectWorkflow(workflowName string, status stri
 	for _, opt := range opts {
 		opt(&stepOptions)
 	}
+
+	key := Status(fmt.Sprintf("%v-%v", workflowName, status))
+	b.workflow.graph[key] = append(b.workflow.graph[key], to)
+	b.workflow.graphOrder = append(b.workflow.graphOrder, to)
 	b.workflow.validStatuses[to] = true
 	b.workflow.connectorConfigs = append(b.workflow.connectorConfigs, connectorConfig[Type, Status]{
 		workflowName:     workflowName,
@@ -182,7 +195,6 @@ func (b *Builder[Type, Status]) Build(eventStreamer EventStreamer, recordStore R
 		b.workflow.defaultPollingFrequency = time.Second
 	}
 
-	b.workflow.graph = b.buildGraph()
 	b.workflow.endPoints = b.determineEndPoints(b.workflow.graph)
 	b.workflow.debugMode = bo.debugMode
 
