@@ -76,7 +76,9 @@ type Workflow[Type any, Status ~string] struct {
 	// as the key.
 	internalState map[string]State
 
-	graph         map[Status][]Status
+	graph      map[Status][]Status
+	graphOrder []Status
+
 	endPoints     map[Status]bool
 	validStatuses map[Status]bool
 
