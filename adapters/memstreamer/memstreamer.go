@@ -11,6 +11,7 @@ func New() *StreamConstructor {
 	var log []*workflow.Event
 	return &StreamConstructor{
 		stream: &Stream{
+			mu:  &sync.Mutex{},
 			log: &log,
 		},
 	}
@@ -25,6 +26,7 @@ func (s StreamConstructor) NewProducer(topic string) workflow.Producer {
 	defer s.stream.mu.Unlock()
 
 	return &Stream{
+		mu:    s.stream.mu,
 		log:   s.stream.log,
 		topic: topic,
 	}
@@ -35,6 +37,7 @@ func (s StreamConstructor) NewConsumer(topic string, name string, opts ...workfl
 	defer s.stream.mu.Unlock()
 
 	return &Stream{
+		mu:    s.stream.mu,
 		log:   s.stream.log,
 		topic: topic,
 		name:  name,
@@ -44,7 +47,7 @@ func (s StreamConstructor) NewConsumer(topic string, name string, opts ...workfl
 var _ workflow.EventStreamer = (*StreamConstructor)(nil)
 
 type Stream struct {
-	mu     sync.Mutex
+	mu     *sync.Mutex
 	log    *[]*workflow.Event
 	offset int
 	topic  string
@@ -64,11 +67,11 @@ func (s *Stream) Send(ctx context.Context, e *workflow.Event) error {
 }
 
 func (s *Stream) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	for ctx.Err() == nil {
+		s.mu.Lock()
 		log := *s.log
+		s.mu.Unlock()
 
 		if len(log)-1 < s.offset {
 			time.Sleep(time.Millisecond * 10)
@@ -81,7 +84,6 @@ func (s *Stream) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, error
 			s.offset += 1
 			continue
 		}
-
 		return log[s.offset], func() error {
 			s.offset += 1
 			return nil
