@@ -3,9 +3,10 @@ package workflow
 import (
 	"context"
 	"fmt"
-	"k8s.io/utils/clock"
 	"path"
 	"time"
+
+	"k8s.io/utils/clock"
 )
 
 func NewBuilder[Type any, Status ~string](name string) *Builder[Type, Status] {
