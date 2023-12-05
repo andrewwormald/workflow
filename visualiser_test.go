@@ -10,14 +10,14 @@ import (
 )
 
 func TestVisualiser(t *testing.T) {
-	b := workflow.NewBuilder[string, string]("example")
-	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[string, string]) (bool, error) {
+	b := workflow.NewBuilder[string, status]("example")
+	b.AddStep(StatusStart, func(ctx context.Context, r *workflow.Record[string, status]) (bool, error) {
 		return true, nil
-	}, "Middle")
+	}, StatusMiddle)
 
-	b.AddStep("Middle", func(ctx context.Context, r *workflow.Record[string, string]) (bool, error) {
+	b.AddStep(StatusMiddle, func(ctx context.Context, r *workflow.Record[string, status]) (bool, error) {
 		return true, nil
-	}, "End", workflow.WithParallelCount(3))
+	}, StatusEnd, workflow.WithParallelCount(3))
 
 	wf := b.Build(nil, nil, nil, nil)
 

@@ -2,8 +2,10 @@ package workflow
 
 import (
 	"context"
-	"github.com/luno/jettison/errors"
+	"fmt"
 	"time"
+
+	"github.com/luno/jettison/errors"
 )
 
 type Timeout struct {
@@ -11,20 +13,20 @@ type Timeout struct {
 	WorkflowName string
 	ForeignID    string
 	RunID        string
-	Status       string
+	Status       int
 	Completed    bool
 	ExpireAt     time.Time
 	CreatedAt    time.Time
 }
 
 // pollTimeouts attempts to find the very next
-func pollTimeouts[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) error {
+func pollTimeouts[Type any, Status StatusType](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) error {
 	for {
 		if ctx.Err() != nil {
 			return errors.Wrap(ErrWorkflowShutdown, "")
 		}
 
-		expiredTimeouts, err := w.timeoutStore.ListValid(ctx, w.Name, string(status), w.clock.Now())
+		expiredTimeouts, err := w.timeoutStore.ListValid(ctx, w.Name, int(status), w.clock.Now())
 		if err != nil {
 			return err
 		}
@@ -35,7 +37,7 @@ func pollTimeouts[Type any, Status ~string](ctx context.Context, w *Workflow[Typ
 				return err
 			}
 
-			if r.Status != string(status) {
+			if r.Status != int(status) {
 				// Object has been updated already. Mark timeout as cancelled as it is no longer valid.
 				err = w.timeoutStore.Cancel(ctx, expiredTimeout.WorkflowName, expiredTimeout.ForeignID, expiredTimeout.RunID, expiredTimeout.Status)
 				if err != nil {
@@ -71,7 +73,7 @@ func pollTimeouts[Type any, Status ~string](ctx context.Context, w *Workflow[Typ
 						WorkflowName: record.WorkflowName,
 						ForeignID:    record.ForeignID,
 						RunID:        record.RunID,
-						Status:       string(config.DestinationStatus),
+						Status:       int(config.DestinationStatus),
 						IsStart:      false,
 						IsEnd:        w.endPoints[config.DestinationStatus],
 						Object:       object,
@@ -84,7 +86,7 @@ func pollTimeouts[Type any, Status ~string](ctx context.Context, w *Workflow[Typ
 					}
 
 					// Mark timeout as having been executed (aka completed) only in the case that true is returned.
-					err = w.timeoutStore.Complete(ctx, record.WorkflowName, record.ForeignID, record.RunID, string(record.Status))
+					err = w.timeoutStore.Complete(ctx, record.WorkflowName, record.ForeignID, record.RunID, int(record.Status))
 					if err != nil {
 						return err
 					}
@@ -99,28 +101,28 @@ func pollTimeouts[Type any, Status ~string](ctx context.Context, w *Workflow[Typ
 	}
 }
 
-type timeouts[Type any, Status ~string] struct {
+type timeouts[Type any, Status StatusType] struct {
 	PollingFrequency time.Duration
 	ErrBackOff       time.Duration
 	Transitions      []timeout[Type, Status]
 }
 
-type timeout[Type any, Status ~string] struct {
+type timeout[Type any, Status StatusType] struct {
 	DestinationStatus Status
 	TimerFunc         TimerFunc[Type, Status]
 	TimeoutFunc       TimeoutFunc[Type, Status]
 }
 
-func timeoutPoller[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
-	role := makeRole(w.Name, string(status), "timeout-consumer")
+func timeoutPoller[Type any, Status StatusType](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
+	role := makeRole(w.Name, fmt.Sprintf("%v", int(status)), "timeout-consumer")
 
 	w.run(role, func(ctx context.Context) error {
 		return pollTimeouts(ctx, w, status, timeouts)
 	}, timeouts.ErrBackOff)
 }
 
-func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
-	role := makeRole(w.Name, string(status), "timeout-auto-inserter-consumer")
+func timeoutAutoInserterConsumer[Type any, Status StatusType](ctx context.Context, w *Workflow[Type, Status], status Status, timeouts timeouts[Type, Status]) {
+	role := makeRole(w.Name, fmt.Sprintf("%v", int(status)), "timeout-auto-inserter-consumer")
 
 	w.run(role, func(ctx context.Context) error {
 		consumerFunc := func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
@@ -135,7 +137,7 @@ func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, 
 					continue
 				}
 
-				err = w.timeoutStore.Create(ctx, r.WorkflowName, r.ForeignID, r.RunID, string(status), expireAt)
+				err = w.timeoutStore.Create(ctx, r.WorkflowName, r.ForeignID, r.RunID, int(status), expireAt)
 				if err != nil {
 					return false, err
 				}
@@ -162,10 +164,10 @@ func timeoutAutoInserterConsumer[Type any, Status ~string](ctx context.Context, 
 // TimerFunc exists to allow the specification of when the timeout should expire dynamically. If not time is set then a
 // timeout will not be created and the event will be skipped. If the time is set then a timeout will be created and
 // once expired TimeoutFunc will be called. Any non-nil error will be retried with backoff.
-type TimerFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], now time.Time) (time.Time, error)
+type TimerFunc[Type any, Status StatusType] func(ctx context.Context, r *Record[Type, Status], now time.Time) (time.Time, error)
 
 // TimeoutFunc runs once the timeout has expired which is set by TimerFunc. If false is returned with a nil error
 // then the timeout is skipped and not retried at a later date. If a non-nil error is returned the TimeoutFunc will be
 // called again until a nil error is returned. If true is returned with a nil error then the provided record and any
 // modifications made to it will be stored and the status updated - continuing the workflow.
-type TimeoutFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, error)
+type TimeoutFunc[Type any, Status StatusType] func(ctx context.Context, r *Record[Type, Status], now time.Time) (bool, error)

@@ -11,11 +11,12 @@ import (
 	"github.com/andrewwormald/workflow/adapters/memrolescheduler"
 	"github.com/andrewwormald/workflow/adapters/memstreamer"
 	"github.com/andrewwormald/workflow/adapters/memtimeoutstore"
+	"github.com/andrewwormald/workflow/examples"
 	"github.com/andrewwormald/workflow/examples/gettingstarted"
 )
 
 func TestWorkflow(t *testing.T) {
-	wf := gettingstarted.Workflow(gettingstarted.Deps{
+	wf := gettingstarted.WorkflowWithEnum(gettingstarted.Deps{
 		EventStreamer: memstreamer.New(),
 		RecordStore:   memrecordstore.New(),
 		TimeoutStore:  memtimeoutstore.New(),
@@ -27,19 +28,19 @@ func TestWorkflow(t *testing.T) {
 	wf.Run(ctx)
 
 	foreignID := "82347982374982374"
-	runID, err := wf.Trigger(ctx, foreignID, "Started")
+	runID, err := wf.Trigger(ctx, foreignID, examples.StatusStarted)
 	jtest.RequireNil(t, err)
 
-	workflow.Require(t, wf, foreignID, runID, "Read the docs", gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, runID, examples.StatusReadTheDocs, gettingstarted.GettingStarted{
 		ReadTheDocs: "✅",
 	})
 
-	workflow.Require(t, wf, foreignID, runID, "Followed the example", gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, runID, examples.StatusFollowedTheExample, gettingstarted.GettingStarted{
 		ReadTheDocs:     "✅",
 		FollowAnExample: "✅",
 	})
 
-	workflow.Require(t, wf, foreignID, runID, "Created a fun example", gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, runID, examples.StatusCreatedAFunExample, gettingstarted.GettingStarted{
 		ReadTheDocs:       "✅",
 		FollowAnExample:   "✅",
 		CreateAFunExample: "✅",

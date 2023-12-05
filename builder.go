@@ -2,14 +2,13 @@ package workflow
 
 import (
 	"context"
-	"fmt"
 	"path"
 	"time"
 
 	"k8s.io/utils/clock"
 )
 
-func NewBuilder[Type any, Status ~string](name string) *Builder[Type, Status] {
+func NewBuilder[Type any, Status StatusType](name string) *Builder[Type, Status] {
 	return &Builder[Type, Status]{
 		workflow: &Workflow[Type, Status]{
 			Name:                    name,
@@ -19,14 +18,14 @@ func NewBuilder[Type any, Status ~string](name string) *Builder[Type, Status] {
 			consumers:               make(map[Status][]consumerConfig[Type, Status]),
 			callback:                make(map[Status][]callback[Type, Status]),
 			timeouts:                make(map[Status]timeouts[Type, Status]),
-			graph:                   make(map[Status][]Status),
+			graph:                   make(map[int][]int),
 			validStatuses:           make(map[Status]bool),
 			internalState:           make(map[string]State),
 		},
 	}
 }
 
-type Builder[Type any, Status ~string] struct {
+type Builder[Type any, Status StatusType] struct {
 	workflow *Workflow[Type, Status]
 }
 
@@ -55,8 +54,8 @@ func (b *Builder[Type, Status]) AddStep(from Status, c ConsumerFunc[Type, Status
 		p.ErrBackOff = so.errBackOff
 	}
 
-	b.workflow.graph[from] = append(b.workflow.graph[from], to)
-	b.workflow.graphOrder = append(b.workflow.graphOrder, from)
+	b.workflow.graph[int(from)] = append(b.workflow.graph[int(from)], int(to))
+	b.workflow.graphOrder = append(b.workflow.graphOrder, int(from))
 	b.workflow.validStatuses[from] = true
 	b.workflow.validStatuses[to] = true
 	b.workflow.consumers[from] = append(b.workflow.consumers[from], p)
@@ -94,8 +93,8 @@ func (b *Builder[Type, Status]) AddCallback(from Status, fn CallbackFunc[Type, S
 		CallbackFunc:      fn,
 	}
 
-	b.workflow.graph[from] = append(b.workflow.graph[from], to)
-	b.workflow.graphOrder = append(b.workflow.graphOrder, from)
+	b.workflow.graph[int(from)] = append(b.workflow.graph[int(from)], int(to))
+	b.workflow.graphOrder = append(b.workflow.graphOrder, int(from))
 	b.workflow.validStatuses[from] = true
 	b.workflow.validStatuses[to] = true
 	b.workflow.callback[from] = append(b.workflow.callback[from], c)
@@ -146,22 +145,19 @@ func (b *Builder[Type, Status]) AddTimeout(from Status, timer TimerFunc[Type, St
 
 	timeouts.Transitions = append(timeouts.Transitions, t)
 
-	b.workflow.graph[from] = append(b.workflow.graph[from], to)
-	b.workflow.graphOrder = append(b.workflow.graphOrder, from)
+	b.workflow.graph[int(from)] = append(b.workflow.graph[int(from)], int(to))
+	b.workflow.graphOrder = append(b.workflow.graphOrder, int(from))
 	b.workflow.validStatuses[from] = true
 	b.workflow.validStatuses[to] = true
 	b.workflow.timeouts[from] = timeouts
 }
 
-func (b *Builder[Type, Status]) ConnectWorkflow(workflowName string, status string, stream EventStreamer, filter ConnectorFilter, consumer ConnectorConsumerFunc[Type, Status], to Status, opts ...StepOption) {
+func (b *Builder[Type, Status]) ConnectWorkflow(workflowName string, status int, stream EventStreamer, filter ConnectorFilter, consumer ConnectorConsumerFunc[Type, Status], to Status, opts ...StepOption) {
 	var stepOptions stepOptions
 	for _, opt := range opts {
 		opt(&stepOptions)
 	}
 
-	key := Status(fmt.Sprintf("%v-%v", workflowName, status))
-	b.workflow.graph[key] = append(b.workflow.graph[key], to)
-	b.workflow.graphOrder = append(b.workflow.graphOrder, to)
 	b.workflow.validStatuses[to] = true
 	b.workflow.connectorConfigs = append(b.workflow.connectorConfigs, connectorConfig[Type, Status]{
 		workflowName:     workflowName,
@@ -169,7 +165,7 @@ func (b *Builder[Type, Status]) ConnectWorkflow(workflowName string, status stri
 		stream:           stream,
 		filter:           filter,
 		consumer:         consumer,
-		to:               string(to),
+		to:               to,
 		pollingFrequency: stepOptions.pollingFrequency,
 		errBackOff:       stepOptions.errBackOff,
 		parallelCount:    stepOptions.parallelCount,
@@ -225,7 +221,7 @@ func (b *Builder[Type, Status]) buildGraph() map[Status][]Status {
 	dedupe := make(map[string]bool)
 	for s, i := range b.workflow.consumers {
 		for _, p := range i {
-			key := path.Join(string(s), string(p.DestinationStatus))
+			key := path.Join(s.String(), p.DestinationStatus.String())
 			if dedupe[key] {
 				continue
 			}
@@ -237,7 +233,7 @@ func (b *Builder[Type, Status]) buildGraph() map[Status][]Status {
 
 	for s, i := range b.workflow.callback {
 		for _, c := range i {
-			key := path.Join(string(s), string(c.DestinationStatus))
+			key := path.Join(s.String(), c.DestinationStatus.String())
 			if dedupe[key] {
 				continue
 			}
@@ -249,7 +245,7 @@ func (b *Builder[Type, Status]) buildGraph() map[Status][]Status {
 
 	for s, t := range b.workflow.timeouts {
 		for _, t := range t.Transitions {
-			key := path.Join(string(s), string(t.DestinationStatus))
+			key := path.Join(s.String(), t.DestinationStatus.String())
 			if dedupe[key] {
 				continue
 			}
@@ -262,14 +258,14 @@ func (b *Builder[Type, Status]) buildGraph() map[Status][]Status {
 	return graph
 }
 
-func (b *Builder[Type, Status]) determineEndPoints(graph map[Status][]Status) map[Status]bool {
+func (b *Builder[Type, Status]) determineEndPoints(graph map[int][]int) map[Status]bool {
 	endpoints := make(map[Status]bool)
 	for _, destinations := range graph {
 		for _, destination := range destinations {
 			_, ok := graph[destination]
 			if !ok {
 				// end points are nodes that do not have any of their own transitions to transition to.
-				endpoints[destination] = true
+				endpoints[Status(destination)] = true
 			}
 		}
 	}
@@ -277,7 +273,7 @@ func (b *Builder[Type, Status]) determineEndPoints(graph map[Status][]Status) ma
 	return endpoints
 }
 
-func Not[Type any, Status ~string](c ConsumerFunc[Type, Status]) ConsumerFunc[Type, Status] {
+func Not[Type any, Status StatusType](c ConsumerFunc[Type, Status]) ConsumerFunc[Type, Status] {
 	return func(ctx context.Context, r *Record[Type, Status]) (bool, error) {
 		pass, err := c(ctx, r)
 		if err != nil {
@@ -288,13 +284,13 @@ func Not[Type any, Status ~string](c ConsumerFunc[Type, Status]) ConsumerFunc[Ty
 	}
 }
 
-func DurationTimerFunc[Type any, Status ~string](duration time.Duration) TimerFunc[Type, Status] {
+func DurationTimerFunc[Type any, Status StatusType](duration time.Duration) TimerFunc[Type, Status] {
 	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (time.Time, error) {
 		return now.Add(duration), nil
 	}
 }
 
-func TimeTimerFunc[Type any, Status ~string](t time.Time) TimerFunc[Type, Status] {
+func TimeTimerFunc[Type any, Status StatusType](t time.Time) TimerFunc[Type, Status] {
 	return func(ctx context.Context, r *Record[Type, Status], now time.Time) (time.Time, error) {
 		return t, nil
 	}

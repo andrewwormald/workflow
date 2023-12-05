@@ -1,12 +1,14 @@
 package workflow
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
-func Topic(parts ...string) string {
-	var ps []string
-	for _, p := range parts {
-		p = strings.ReplaceAll(p, " ", "-")
-		ps = append(ps, p)
-	}
-	return strings.Join(ps, "-")
+func Topic(workflowName string, statusType int) string {
+	name := strings.ReplaceAll(workflowName, " ", "-")
+	return strings.Join([]string{
+		name,
+		fmt.Sprintf("%v", statusType),
+	}, "-")
 }

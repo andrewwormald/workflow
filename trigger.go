@@ -60,7 +60,7 @@ func (w *Workflow[Type, Status]) Trigger(ctx context.Context, foreignID string, 
 		RunID:        runID,
 		WorkflowName: w.Name,
 		ForeignID:    foreignID,
-		Status:       string(startingStatus),
+		Status:       int(startingStatus),
 		// isStart is always true when being stored as the trigger as it is the beginning of the workflow
 		IsStart: true,
 		// isEnd is always false as there should always be more than one node in the graph so that there can be a
@@ -93,7 +93,7 @@ func (w *Workflow[Type, Status]) ScheduleTrigger(foreignID string, startingStatu
 		return err
 	}
 
-	role := strings.Join([]string{w.Name, string(startingStatus), foreignID, "scheduler", spec}, "-")
+	role := strings.Join([]string{w.Name, fmt.Sprintf("%v", int(startingStatus)), foreignID, "scheduler", spec}, "-")
 
 	w.run(role, func(ctx context.Context) error {
 		latestEntry, err := w.recordStore.Latest(ctx, w.Name, foreignID)
@@ -144,14 +144,14 @@ func waitUntil(ctx context.Context, clock clock.Clock, until time.Time) error {
 	}
 }
 
-type triggerOpts[Type any, Status ~string] struct {
+type triggerOpts[Type any, Status StatusType] struct {
 	initialValue   *Type
 	startingStatus int
 }
 
-type TriggerOption[Type any, Status ~string] func(o *triggerOpts[Type, Status])
+type TriggerOption[Type any, Status StatusType] func(o *triggerOpts[Type, Status])
 
-func WithInitialValue[Type any, Status ~string](t *Type) TriggerOption[Type, Status] {
+func WithInitialValue[Type any, Status StatusType](t *Type) TriggerOption[Type, Status] {
 	return func(o *triggerOpts[Type, Status]) {
 		o.initialValue = t
 	}

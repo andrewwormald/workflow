@@ -32,7 +32,7 @@ type Store struct {
 	timeoutSelectPrefix string
 }
 
-func (s *Store) Create(ctx context.Context, workflowName, foreignID, runID, status string, expireAt time.Time) error {
+func (s *Store) Create(ctx context.Context, workflowName, foreignID, runID string, status int, expireAt time.Time) error {
 	_, err := s.writer.ExecContext(ctx, "insert into "+s.timeoutTableName+" set "+
 		" workflow_name=?, foreign_id=?, run_id=?, status=?, completed=?, expire_at=?, created_at=now() ",
 		workflowName,
@@ -55,28 +55,28 @@ func (s *Store) Create(ctx context.Context, workflowName, foreignID, runID, stat
 	return nil
 }
 
-func (s *Store) Complete(ctx context.Context, workflowName, foreignID, runID, status string) error {
+func (s *Store) Complete(ctx context.Context, workflowName, foreignID, runID string, status int) error {
 	_, err := s.writer.ExecContext(ctx, "update "+s.timeoutTableName+" set completed=true where workflow_name=? and foreign_id=? and run_id=? and status=?", workflowName, foreignID, runID, status)
 	if err != nil {
 		return errors.Wrap(err, "failed to complete timeout", j.MKV{
-			workflowName: workflowName,
-			foreignID:    foreignID,
-			runID:        runID,
-			status:       status,
+			"workflowName": workflowName,
+			"foreignID":    foreignID,
+			"runID":        runID,
+			"status":       status,
 		})
 	}
 
 	return nil
 }
 
-func (s *Store) Cancel(ctx context.Context, workflowName, foreignID, runID, status string) error {
+func (s *Store) Cancel(ctx context.Context, workflowName, foreignID, runID string, status int) error {
 	_, err := s.writer.ExecContext(ctx, "delete from "+s.timeoutTableName+" where workflow_name=? and foreign_id=? and run_id=? and status=?", workflowName, foreignID, runID, status)
 	if err != nil {
 		return errors.Wrap(err, "failed to cancel / delete timeout", j.MKV{
-			workflowName: workflowName,
-			foreignID:    foreignID,
-			runID:        runID,
-			status:       status,
+			"workflowName": workflowName,
+			"foreignID":    foreignID,
+			"runID":        runID,
+			"status":       status,
 		})
 	}
 
@@ -106,7 +106,7 @@ func (s *Store) List(ctx context.Context, workflowName string) ([]workflow.Timeo
 	return res, nil
 }
 
-func (s *Store) ListValid(ctx context.Context, workflowName string, status string, now time.Time) ([]workflow.Timeout, error) {
+func (s *Store) ListValid(ctx context.Context, workflowName string, status int, now time.Time) ([]workflow.Timeout, error) {
 	rows, err := s.reader.QueryContext(ctx, s.timeoutSelectPrefix+" workflow_name=? and status=? and expire_at<? and completed=false", workflowName, status, now)
 	if err != nil {
 		return nil, errors.Wrap(err, "list valid timeouts")

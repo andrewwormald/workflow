@@ -2,10 +2,10 @@ package memtimeoutstore
 
 import (
 	"context"
-	"fmt"
-	"k8s.io/utils/clock"
 	"sync"
 	"time"
+
+	"k8s.io/utils/clock"
 
 	"github.com/andrewwormald/workflow"
 )
@@ -56,7 +56,7 @@ func (s *Store) List(ctx context.Context, workflowName string) ([]workflow.Timeo
 	return ls, nil
 }
 
-func (s *Store) Create(ctx context.Context, workflowName, foreignID, runID, status string, expireAt time.Time) error {
+func (s *Store) Create(ctx context.Context, workflowName, foreignID, runID string, status int, expireAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -74,7 +74,7 @@ func (s *Store) Create(ctx context.Context, workflowName, foreignID, runID, stat
 	return nil
 }
 
-func (s *Store) Complete(ctx context.Context, workflowName, foreignID, runID, status string) error {
+func (s *Store) Complete(ctx context.Context, workflowName, foreignID, runID string, status int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -102,7 +102,7 @@ func (s *Store) Complete(ctx context.Context, workflowName, foreignID, runID, st
 	return nil
 }
 
-func (s *Store) Cancel(ctx context.Context, workflowName, foreignID, runID, status string) error {
+func (s *Store) Cancel(ctx context.Context, workflowName, foreignID, runID string, status int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -134,7 +134,7 @@ func (s *Store) Cancel(ctx context.Context, workflowName, foreignID, runID, stat
 	return nil
 }
 
-func (s *Store) ListValid(ctx context.Context, workflowName string, status string, now time.Time) ([]workflow.Timeout, error) {
+func (s *Store) ListValid(ctx context.Context, workflowName string, status int, now time.Time) ([]workflow.Timeout, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -160,8 +160,4 @@ func (s *Store) ListValid(ctx context.Context, workflowName string, status strin
 	}
 
 	return valid, nil
-}
-
-func uniqueKey(s1, s2 string) string {
-	return fmt.Sprintf("%v-%v", s1, s2)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/andrewwormald/workflow"
+	"github.com/andrewwormald/workflow/examples"
 )
 
 type WorkflowADeps struct {
@@ -17,18 +18,18 @@ type TypeA struct {
 	Value string
 }
 
-func WorkflowA(d WorkflowADeps) *workflow.Workflow[TypeA, string] {
-	builder := workflow.NewBuilder[TypeA, string]("workflow A")
+func WorkflowA(d WorkflowADeps) *workflow.Workflow[TypeA, examples.Status] {
+	builder := workflow.NewBuilder[TypeA, examples.Status]("workflow A")
 
-	builder.AddStep("Start", func(ctx context.Context, r *workflow.Record[TypeA, string]) (bool, error) {
+	builder.AddStep(examples.StatusStarted, func(ctx context.Context, r *workflow.Record[TypeA, examples.Status]) (bool, error) {
 		r.Object.Value = "Hello"
 		return true, nil
-	}, "Middle")
+	}, examples.StatusFollowedTheExample)
 
-	builder.AddStep("Middle", func(ctx context.Context, r *workflow.Record[TypeA, string]) (bool, error) {
+	builder.AddStep(examples.StatusFollowedTheExample, func(ctx context.Context, r *workflow.Record[TypeA, examples.Status]) (bool, error) {
 		r.Object.Value += " World"
 		return true, nil
-	}, "End")
+	}, examples.StatusCreatedAFunExample)
 
 	return builder.Build(
 		d.EventStreamer,
@@ -51,21 +52,21 @@ type TypeB struct {
 	Value string
 }
 
-func WorkflowB(d WorkflowBDeps) *workflow.Workflow[TypeB, string] {
-	builder := workflow.NewBuilder[TypeB, string]("workflow B")
+func WorkflowB(d WorkflowBDeps) *workflow.Workflow[TypeB, examples.Status] {
+	builder := workflow.NewBuilder[TypeB, examples.Status]("workflow B")
 
-	builder.AddStep("Start", func(ctx context.Context, r *workflow.Record[TypeB, string]) (bool, error) {
+	builder.AddStep(examples.StatusStarted, func(ctx context.Context, r *workflow.Record[TypeB, examples.Status]) (bool, error) {
 		return true, nil
-	}, "Waiting for workflow A")
+	}, examples.StatusFollowedTheExample)
 
 	builder.ConnectWorkflow(
 		"workflow A",
-		"End",
+		int(examples.StatusCreatedAFunExample),
 		d.WorkflowAStreamer,
 		func(ctx context.Context, e *workflow.Event) (foreignID string, err error) {
 			return e.ForeignID, nil
 		},
-		func(ctx context.Context, r *workflow.Record[TypeB, string], e *workflow.Event) (bool, error) {
+		func(ctx context.Context, r *workflow.Record[TypeB, examples.Status], e *workflow.Event) (bool, error) {
 			wr, err := workflow.UnmarshalRecord(e.Body)
 			if err != nil {
 				return false, err
@@ -81,7 +82,7 @@ func WorkflowB(d WorkflowBDeps) *workflow.Workflow[TypeB, string] {
 
 			return true, nil
 		},
-		"Finished waiting",
+		examples.StatusCreatedAFunExample,
 	)
 
 	return builder.Build(

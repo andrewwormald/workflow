@@ -13,6 +13,7 @@ import (
 	"github.com/andrewwormald/workflow/adapters/memrolescheduler"
 	"github.com/andrewwormald/workflow/adapters/memstreamer"
 	"github.com/andrewwormald/workflow/adapters/memtimeoutstore"
+	"github.com/andrewwormald/workflow/examples"
 	"github.com/andrewwormald/workflow/examples/timeouts"
 )
 
@@ -32,14 +33,14 @@ func TestTimeoutWorkflow(t *testing.T) {
 	wf.Run(ctx)
 
 	foreignID := "andrew"
-	runID, err := wf.Trigger(ctx, foreignID, "Start")
+	runID, err := wf.Trigger(ctx, foreignID, examples.StatusStarted)
 	jtest.RequireNil(t, err)
 
-	workflow.AwaitTimeoutInsert(t, wf, foreignID, runID, "Start")
+	workflow.AwaitTimeoutInsert(t, wf, foreignID, runID, examples.StatusStarted)
 
 	clock.Step(time.Hour)
 
-	workflow.Require(t, wf, foreignID, runID, "End", timeouts.Example{
+	workflow.Require(t, wf, foreignID, runID, examples.StatusFollowedTheExample, timeouts.Example{
 		Now: clock.Now(),
 	})
 }

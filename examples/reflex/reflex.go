@@ -11,10 +11,11 @@ import (
 	"github.com/andrewwormald/workflow/adapters/memrolescheduler"
 	"github.com/andrewwormald/workflow/adapters/memtimeoutstore"
 	"github.com/andrewwormald/workflow/adapters/reflexstreamer"
+	"github.com/andrewwormald/workflow/examples"
 	"github.com/andrewwormald/workflow/examples/gettingstarted"
 )
 
-func ExampleWorkflow(db *sql.DB, table *rsql.EventsTable, cstore reflex.CursorStore) *workflow.Workflow[gettingstarted.GettingStarted, gettingstarted.Status] {
+func ExampleWorkflow(db *sql.DB, table *rsql.EventsTable, cstore reflex.CursorStore) *workflow.Workflow[gettingstarted.GettingStarted, examples.Status] {
 	return gettingstarted.WorkflowWithEnum(gettingstarted.Deps{
 		EventStreamer: reflexstreamer.New(db, db, table, cstore),
 		RecordStore:   memrecordstore.New(),

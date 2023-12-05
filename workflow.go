@@ -2,17 +2,17 @@ package workflow
 
 import (
 	"context"
-	"github.com/luno/jettison/errors"
-	"github.com/luno/jettison/j"
-	"github.com/luno/jettison/log"
 	"io"
 	"sync"
 	"time"
 
+	"github.com/luno/jettison/errors"
+	"github.com/luno/jettison/j"
+	"github.com/luno/jettison/log"
 	"k8s.io/utils/clock"
 )
 
-type API[Type any, Status ~string] interface {
+type API[Type any, Status StatusType] interface {
 	// Trigger will kickstart a workflow for the provided foreignID starting from the provided starting status. There
 	// is no limitation as to where you start the workflow from. For workflows that have data preceding the initial
 	// trigger that needs to be used in the workflow, using WithInitialValue will allow you to provide pre-populated
@@ -47,7 +47,7 @@ type API[Type any, Status ~string] interface {
 	Stop()
 }
 
-type Workflow[Type any, Status ~string] struct {
+type Workflow[Type any, Status StatusType] struct {
 	Name string
 
 	ctx    context.Context
@@ -76,8 +76,8 @@ type Workflow[Type any, Status ~string] struct {
 	// as the key.
 	internalState map[string]State
 
-	graph      map[Status][]Status
-	graphOrder []Status
+	graph      map[int][]int
+	graphOrder []int
 
 	endPoints     map[Status]bool
 	validStatuses map[Status]bool
@@ -149,9 +149,9 @@ func (w *Workflow[Type, Status]) run(role string, process func(ctx context.Conte
 		if ctx.Err() != nil {
 			// Gracefully exit when context has been cancelled
 			if w.debugMode {
-				log.Error(ctx, errors.Wrap(err, "shutting down", j.MKV{
+				log.Info(ctx, "shutting down", j.MKV{
 					"role": role,
-				}))
+				})
 			}
 			return
 		}
