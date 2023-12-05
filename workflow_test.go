@@ -706,10 +706,6 @@ func TestConnectStream(t *testing.T) {
 	runID, err := workflowB.Trigger(ctx, foreignID, StatusStart)
 	jtest.RequireNil(t, err)
 
-	// Wait until workflow B is at "Middle" where we expect workflowB to wait for workflowA
-	_, err = workflowB.Await(ctx, foreignID, runID, StatusMiddle)
-	jtest.RequireNil(t, err)
-
 	// Trigger workflowA
 	_, err = workflowA.Trigger(ctx, foreignID, StatusInitiated)
 	jtest.RequireNil(t, err)

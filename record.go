@@ -17,6 +17,7 @@ type Record[Type any, Status StatusType] struct {
 }
 
 type WireRecord struct {
+	ID           int64
 	WorkflowName string
 	ForeignID    string
 	RunID        string
