@@ -6,7 +6,7 @@ import (
 	"text/template"
 )
 
-func MermaidDiagram[Type any, Status ~string](w *Workflow[Type, Status], path string, d MermaidDirection) error {
+func MermaidDiagram[Type any, Status StatusType](w *Workflow[Type, Status], path string, d MermaidDirection) error {
 	breakDown := strings.Split(path, "/")
 	dirPath := strings.Join(breakDown[:len(breakDown)-1], "/")
 
@@ -31,35 +31,35 @@ func MermaidDiagram[Type any, Status ~string](w *Workflow[Type, Status], path st
 
 	startingPoint := make(map[Status]bool)
 	for _, from := range w.graphOrder {
-		if _, ok := startingPoint[from]; !ok {
-			startingPoint[from] = true
+		if _, ok := startingPoint[Status(from)]; !ok {
+			startingPoint[Status(from)] = true
 		}
 
-		if w.endPoints[from] {
-			mf.TerminalPoints = append(mf.TerminalPoints, string(from))
+		if w.endPoints[Status(from)] {
+			mf.TerminalPoints = append(mf.TerminalPoints, Status(from).String())
 		}
 
 		for _, to := range w.graph[from] {
-			startingPoint[to] = false
+			startingPoint[Status(to)] = false
 
 			mf.Transitions = append(mf.Transitions, MermaidTransition{
-				From: string(from),
-				To:   string(to),
+				From: Status(from).String(),
+				To:   Status(to).String(),
 			})
 
-			if w.endPoints[to] {
-				mf.TerminalPoints = append(mf.TerminalPoints, string(to))
+			if w.endPoints[Status(to)] {
+				mf.TerminalPoints = append(mf.TerminalPoints, Status(to).String())
 			}
 		}
 
 	}
 
 	for _, from := range w.graphOrder {
-		if !startingPoint[from] {
+		if !startingPoint[Status(from)] {
 			continue
 		}
 
-		mf.StartingPoints = append(mf.StartingPoints, string(from))
+		mf.StartingPoints = append(mf.StartingPoints, Status(from).String())
 	}
 
 	return template.Must(template.New("").Parse("```"+mermaidTemplate+"```")).Execute(file, mf)

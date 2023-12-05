@@ -50,8 +50,8 @@ func WithConsumerPollFrequency(d time.Duration) ConsumerOption {
 	}
 }
 
-func awaitWorkflowStatusByForeignID[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], status Status, foreignID, runID string, role string, pollFrequency time.Duration) (*Record[Type, Status], error) {
-	topic := Topic(w.Name, string(status))
+func awaitWorkflowStatusByForeignID[Type any, Status StatusType](ctx context.Context, w *Workflow[Type, Status], status Status, foreignID, runID string, role string, pollFrequency time.Duration) (*Record[Type, Status], error) {
+	topic := Topic(w.Name, int(status))
 	stream := w.eventStreamerFn.NewConsumer(
 		topic,
 		role,
@@ -79,7 +79,7 @@ func awaitWorkflowStatusByForeignID[Type any, Status ~string](ctx context.Contex
 
 		switch true {
 		// If the record doesn't match the status, foreignID, and runID then sleep and try again
-		case r.Status != string(status), r.ForeignID != foreignID, r.RunID != runID:
+		case r.Status != int(status), r.ForeignID != foreignID, r.RunID != runID:
 			// Increment the offset / cursor to consume new events
 			err = ack()
 			if err != nil {

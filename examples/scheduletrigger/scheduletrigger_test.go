@@ -14,6 +14,7 @@ import (
 	"github.com/andrewwormald/workflow/adapters/memrolescheduler"
 	"github.com/andrewwormald/workflow/adapters/memstreamer"
 	"github.com/andrewwormald/workflow/adapters/memtimeoutstore"
+	"github.com/andrewwormald/workflow/examples"
 	"github.com/andrewwormald/workflow/examples/scheduletrigger"
 )
 
@@ -36,7 +37,7 @@ func TestExampleWorkflow(t *testing.T) {
 	foreignID := "hourly-run"
 
 	go func() {
-		err := wf.ScheduleTrigger(foreignID, "Start", "@hourly")
+		err := wf.ScheduleTrigger(foreignID, examples.StatusStarted, "@hourly")
 		jtest.RequireNil(t, err)
 	}()
 

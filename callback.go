@@ -9,12 +9,12 @@ import (
 	"github.com/luno/jettison/j"
 )
 
-type callback[Type any, Status ~string] struct {
+type callback[Type any, Status StatusType] struct {
 	DestinationStatus Status
 	CallbackFunc      CallbackFunc[Type, Status]
 }
 
-type CallbackFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], reader io.Reader) (bool, error)
+type CallbackFunc[Type any, Status StatusType] func(ctx context.Context, r *Record[Type, Status], reader io.Reader) (bool, error)
 
 func (w *Workflow[Type, Status]) Callback(ctx context.Context, foreignID string, status Status, payload io.Reader) error {
 	for _, s := range w.callback[status] {
@@ -27,7 +27,7 @@ func (w *Workflow[Type, Status]) Callback(ctx context.Context, foreignID string,
 	return nil
 }
 
-func processCallback[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], currentStatus, destinationStatus Status, fn CallbackFunc[Type, Status], foreignID string, payload io.Reader) error {
+func processCallback[Type any, Status StatusType](ctx context.Context, w *Workflow[Type, Status], currentStatus, destinationStatus Status, fn CallbackFunc[Type, Status], foreignID string, payload io.Reader) error {
 	latest, err := w.recordStore.Latest(ctx, w.Name, foreignID)
 	if err != nil {
 		return errors.Wrap(err, "failed to latest record for callback", j.MKV{
@@ -35,7 +35,7 @@ func processCallback[Type any, Status ~string](ctx context.Context, w *Workflow[
 		})
 	}
 
-	if latest.Status != string(currentStatus) {
+	if Status(latest.Status) != currentStatus {
 		// Latest record shows that the current status is in a different State than expected so skip.
 		return nil
 	}
@@ -75,7 +75,7 @@ func processCallback[Type any, Status ~string](ctx context.Context, w *Workflow[
 		WorkflowName: record.WorkflowName,
 		ForeignID:    record.ForeignID,
 		RunID:        record.RunID,
-		Status:       string(destinationStatus),
+		Status:       int(destinationStatus),
 		IsStart:      false,
 		IsEnd:        w.endPoints[destinationStatus],
 		Object:       object,

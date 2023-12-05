@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewwormald/workflow"
 	"github.com/luno/jettison/jtest"
 	"github.com/stretchr/testify/require"
+
+	"github.com/andrewwormald/workflow"
 )
 
 func TestTimeoutStore(t *testing.T, factory func() workflow.TimeoutStore) {
@@ -26,16 +27,16 @@ func TestTimeoutStore(t *testing.T, factory func() workflow.TimeoutStore) {
 func testCancelTimeout(t *testing.T, store workflow.TimeoutStore) {
 	ctx := context.Background()
 
-	err := store.Create(ctx, "example", "andrew", "1", "Started", time.Now().Add(-time.Hour))
+	err := store.Create(ctx, "example", "andrew", "1", int(statusStarted), time.Now().Add(-time.Hour))
 	jtest.RequireNil(t, err)
 
-	err = store.Create(ctx, "example", "andrew", "2", "Started", time.Now().Add(-time.Hour))
+	err = store.Create(ctx, "example", "andrew", "2", int(statusStarted), time.Now().Add(-time.Hour))
 	jtest.RequireNil(t, err)
 
-	err = store.Create(ctx, "example", "andrew", "3", "Started", time.Now().Add(-time.Hour))
+	err = store.Create(ctx, "example", "andrew", "3", int(statusStarted), time.Now().Add(-time.Hour))
 	jtest.RequireNil(t, err)
 
-	timeout, err := store.ListValid(ctx, "example", "Started", time.Now())
+	timeout, err := store.ListValid(ctx, "example", int(statusStarted), time.Now())
 	jtest.RequireNil(t, err)
 
 	require.Equal(t, 3, len(timeout))
@@ -64,10 +65,10 @@ func testCancelTimeout(t *testing.T, store workflow.TimeoutStore) {
 	require.WithinDuration(t, time.Now().Add(-time.Hour), timeout[2].ExpireAt, time.Second)
 	require.WithinDuration(t, time.Now(), timeout[2].CreatedAt, time.Second)
 
-	err = store.Cancel(ctx, "example", "andrew", "2", "Started")
+	err = store.Cancel(ctx, "example", "andrew", "2", int(statusStarted))
 	jtest.RequireNil(t, err)
 
-	timeout, err = store.ListValid(ctx, "example", "Started", time.Now())
+	timeout, err = store.ListValid(ctx, "example", int(statusStarted), time.Now())
 	jtest.RequireNil(t, err)
 
 	require.Equal(t, 2, len(timeout))
@@ -92,16 +93,16 @@ func testCancelTimeout(t *testing.T, store workflow.TimeoutStore) {
 func testCompleteTimeout(t *testing.T, store workflow.TimeoutStore) {
 	ctx := context.Background()
 
-	err := store.Create(ctx, "example", "andrew", "1", "Started", time.Now().Add(-time.Hour))
+	err := store.Create(ctx, "example", "andrew", "1", int(statusStarted), time.Now().Add(-time.Hour))
 	jtest.RequireNil(t, err)
 
-	err = store.Create(ctx, "example", "andrew", "2", "Started", time.Now().Add(-time.Hour))
+	err = store.Create(ctx, "example", "andrew", "2", int(statusStarted), time.Now().Add(-time.Hour))
 	jtest.RequireNil(t, err)
 
-	err = store.Create(ctx, "example", "andrew", "3", "Started", time.Now().Add(-time.Hour))
+	err = store.Create(ctx, "example", "andrew", "3", int(statusStarted), time.Now().Add(-time.Hour))
 	jtest.RequireNil(t, err)
 
-	timeout, err := store.ListValid(ctx, "example", "Started", time.Now())
+	timeout, err := store.ListValid(ctx, "example", int(statusStarted), time.Now())
 	jtest.RequireNil(t, err)
 
 	require.Equal(t, 3, len(timeout))
@@ -130,10 +131,10 @@ func testCompleteTimeout(t *testing.T, store workflow.TimeoutStore) {
 	require.WithinDuration(t, time.Now().Add(-time.Hour), timeout[2].ExpireAt, time.Second)
 	require.WithinDuration(t, time.Now(), timeout[2].CreatedAt, time.Second)
 
-	err = store.Complete(ctx, "example", "andrew", "2", "Started")
+	err = store.Complete(ctx, "example", "andrew", "2", int(statusStarted))
 	jtest.RequireNil(t, err)
 
-	timeout, err = store.ListValid(ctx, "example", "Started", time.Now())
+	timeout, err = store.ListValid(ctx, "example", int(statusStarted), time.Now())
 	jtest.RequireNil(t, err)
 
 	require.Equal(t, 2, len(timeout))
@@ -158,13 +159,13 @@ func testCompleteTimeout(t *testing.T, store workflow.TimeoutStore) {
 func testListTimeout(t *testing.T, store workflow.TimeoutStore) {
 	ctx := context.Background()
 
-	err := store.Create(ctx, "example", "andrew", "1", "Started", time.Now().Add(-time.Hour))
+	err := store.Create(ctx, "example", "andrew", "1", int(statusStarted), time.Now().Add(-time.Hour))
 	jtest.RequireNil(t, err)
 
-	err = store.Create(ctx, "example", "andrew", "2", "Middle", time.Now().Add(time.Hour))
+	err = store.Create(ctx, "example", "andrew", "2", int(statusMiddle), time.Now().Add(time.Hour))
 	jtest.RequireNil(t, err)
 
-	err = store.Create(ctx, "example", "andrew", "3", "Completed", time.Now().Add(time.Hour*2))
+	err = store.Create(ctx, "example", "andrew", "3", int(statusEnd), time.Now().Add(time.Hour*2))
 	jtest.RequireNil(t, err)
 
 	timeout, err := store.List(ctx, "example")

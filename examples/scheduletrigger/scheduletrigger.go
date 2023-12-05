@@ -6,6 +6,7 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/andrewwormald/workflow"
+	"github.com/andrewwormald/workflow/examples"
 )
 
 type Example struct {
@@ -20,12 +21,12 @@ type Deps struct {
 	Clock         clock.Clock
 }
 
-func ExampleWorkflow(d Deps) *workflow.Workflow[Example, string] {
-	b := workflow.NewBuilder[Example, string]("schedule trigger example")
+func ExampleWorkflow(d Deps) *workflow.Workflow[Example, examples.Status] {
+	b := workflow.NewBuilder[Example, examples.Status]("schedule trigger example")
 
-	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[Example, string]) (bool, error) {
+	b.AddStep(examples.StatusStarted, func(ctx context.Context, r *workflow.Record[Example, examples.Status]) (bool, error) {
 		return true, nil
-	}, "End")
+	}, examples.StatusFollowedTheExample)
 
 	return b.Build(
 		d.EventStreamer,

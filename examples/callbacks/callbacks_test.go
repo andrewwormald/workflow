@@ -11,6 +11,7 @@ import (
 	"github.com/andrewwormald/workflow/adapters/memrolescheduler"
 	"github.com/andrewwormald/workflow/adapters/memstreamer"
 	"github.com/andrewwormald/workflow/adapters/memtimeoutstore"
+	"github.com/andrewwormald/workflow/examples"
 	"github.com/andrewwormald/workflow/examples/callbacks"
 )
 
@@ -27,14 +28,14 @@ func TestCallbackWorkflow(t *testing.T) {
 	wf.Run(ctx)
 
 	foreignID := "andrew"
-	runID, err := wf.Trigger(ctx, foreignID, "Start")
+	runID, err := wf.Trigger(ctx, foreignID, examples.StatusStarted)
 	jtest.RequireNil(t, err)
 
-	workflow.TriggerCallbackOn(t, wf, foreignID, runID, "Start", callbacks.EmailConfirmationResponse{
+	workflow.TriggerCallbackOn(t, wf, foreignID, runID, examples.StatusStarted, callbacks.EmailConfirmationResponse{
 		Confirmed: true,
 	})
 
-	workflow.Require(t, wf, foreignID, runID, "End", callbacks.Example{
+	workflow.Require(t, wf, foreignID, runID, examples.StatusFollowedTheExample, callbacks.Example{
 		EmailConfirmed: true,
 	})
 }

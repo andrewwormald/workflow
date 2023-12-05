@@ -2,13 +2,13 @@ package testing
 
 import (
 	"context"
-	clock_testing "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/luno/jettison/jtest"
 	"github.com/stretchr/testify/require"
+	clock_testing "k8s.io/utils/clock/testing"
 
 	"github.com/andrewwormald/workflow"
 	"github.com/andrewwormald/workflow/adapters/memrecordstore"
@@ -16,14 +16,30 @@ import (
 	"github.com/andrewwormald/workflow/adapters/memtimeoutstore"
 )
 
-type SyncStatus string
+type SyncStatus int
 
 const (
-	SyncStatusStarted           SyncStatus = "Started"
-	SyncStatusEmailSet          SyncStatus = "Email set"
-	SyncStatusRegulationTimeout SyncStatus = "Regulatory cool down period"
-	SyncStatusCompleted         SyncStatus = "Completed"
+	SyncStatusUnknown           SyncStatus = 0
+	SyncStatusStarted           SyncStatus = 1
+	SyncStatusEmailSet          SyncStatus = 2
+	SyncStatusRegulationTimeout SyncStatus = 3
+	SyncStatusCompleted         SyncStatus = 4
 )
+
+func (s SyncStatus) String() string {
+	switch s {
+	case SyncStatusStarted:
+		return "Started"
+	case SyncStatusEmailSet:
+		return "Email set"
+	case SyncStatusRegulationTimeout:
+		return "Regulatory cool down period"
+	case SyncStatusCompleted:
+		return "Completed"
+	default:
+		return "Unknown"
+	}
+}
 
 type User struct {
 	UID         string
@@ -87,7 +103,7 @@ func TestStreamer(t *testing.T, constructor workflow.EventStreamer) {
 	jtest.RequireNil(t, err)
 
 	require.Equal(t, "andrew@workflow.com", record.Object.Email)
-	require.Equal(t, string(SyncStatusCompleted), string(record.Status))
+	require.Equal(t, SyncStatusCompleted.String(), record.Status.String())
 	require.NotEmpty(t, record.Object.UID)
 }
 

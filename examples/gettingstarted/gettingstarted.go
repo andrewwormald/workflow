@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/andrewwormald/workflow"
+	"github.com/andrewwormald/workflow/examples"
 )
 
 type GettingStarted struct {
@@ -19,23 +20,23 @@ type Deps struct {
 	RoleScheduler workflow.RoleScheduler
 }
 
-func Workflow(d Deps) *workflow.Workflow[GettingStarted, string] {
-	b := workflow.NewBuilder[GettingStarted, string]("getting started")
+func WorkflowWithEnum(d Deps) *workflow.Workflow[GettingStarted, examples.Status] {
+	b := workflow.NewBuilder[GettingStarted, examples.Status]("getting started")
 
-	b.AddStep("Started", func(ctx context.Context, r *workflow.Record[GettingStarted, string]) (bool, error) {
+	b.AddStep(examples.StatusStarted, func(ctx context.Context, r *workflow.Record[GettingStarted, examples.Status]) (bool, error) {
 		r.Object.ReadTheDocs = "✅"
 		return true, nil
-	}, "Read the docs")
+	}, examples.StatusReadTheDocs)
 
-	b.AddStep("Read the docs", func(ctx context.Context, r *workflow.Record[GettingStarted, string]) (bool, error) {
+	b.AddStep(examples.StatusReadTheDocs, func(ctx context.Context, r *workflow.Record[GettingStarted, examples.Status]) (bool, error) {
 		r.Object.FollowAnExample = "✅"
 		return true, nil
-	}, "Followed the example")
+	}, examples.StatusFollowedTheExample)
 
-	b.AddStep("Followed the example", func(ctx context.Context, r *workflow.Record[GettingStarted, string]) (bool, error) {
+	b.AddStep(examples.StatusFollowedTheExample, func(ctx context.Context, r *workflow.Record[GettingStarted, examples.Status]) (bool, error) {
 		r.Object.CreateAFunExample = "✅"
 		return true, nil
-	}, "Created a fun example")
+	}, examples.StatusCreatedAFunExample)
 
 	return b.Build(
 		d.EventStreamer,

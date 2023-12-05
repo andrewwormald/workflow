@@ -10,17 +10,17 @@ import (
 	"github.com/andrewwormald/workflow/workflowpb"
 )
 
-type Record[T any, Status ~string] struct {
+type Record[Type any, Status StatusType] struct {
 	WireRecord
 	Status Status
-	Object *T
+	Object *Type
 }
 
 type WireRecord struct {
 	WorkflowName string
 	ForeignID    string
 	RunID        string
-	Status       string
+	Status       int
 	IsStart      bool
 	IsEnd        bool
 	Object       []byte
@@ -41,7 +41,7 @@ func ToProto(r *WireRecord) *workflowpb.Record {
 		WorkflowName: r.WorkflowName,
 		ForeignId:    r.ForeignID,
 		RunId:        r.RunID,
-		Status:       r.Status,
+		Status:       int32(r.Status),
 		IsStart:      r.IsStart,
 		IsEnd:        r.IsEnd,
 		Object:       r.Object,
@@ -60,7 +60,7 @@ func UnmarshalRecord(b []byte) (*WireRecord, error) {
 		WorkflowName: wpb.WorkflowName,
 		ForeignID:    wpb.ForeignId,
 		RunID:        wpb.RunId,
-		Status:       wpb.Status,
+		Status:       int(wpb.Status),
 		IsStart:      wpb.IsStart,
 		IsEnd:        wpb.IsEnd,
 		Object:       wpb.Object,

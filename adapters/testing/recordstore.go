@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewwormald/workflow"
 	"github.com/luno/jettison/jtest"
 	"github.com/stretchr/testify/require"
+
+	"github.com/andrewwormald/workflow"
 )
 
 func TestRecordStore(t *testing.T, factory func() workflow.RecordStore) {
@@ -42,7 +43,7 @@ func testStore_Latest(t *testing.T, store workflow.RecordStore) {
 		WorkflowName: workflowName,
 		ForeignID:    foreignID,
 		RunID:        runID,
-		Status:       "Started",
+		Status:       int(statusStarted),
 		IsStart:      true,
 		IsEnd:        false,
 		Object:       b,
@@ -51,7 +52,7 @@ func testStore_Latest(t *testing.T, store workflow.RecordStore) {
 	err = store.Store(ctx, wr)
 	jtest.RequireNil(t, err)
 
-	wr.Status = "Completed"
+	wr.Status = int(statusEnd)
 	wr.IsStart = false
 	wr.IsEnd = true
 	err = store.Store(ctx, wr)
@@ -61,7 +62,7 @@ func testStore_Latest(t *testing.T, store workflow.RecordStore) {
 		WorkflowName: workflowName,
 		ForeignID:    foreignID,
 		RunID:        runID,
-		Status:       "Completed",
+		Status:       int(statusEnd),
 		Object:       b,
 		IsStart:      false,
 		IsEnd:        true,

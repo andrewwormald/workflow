@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/andrewwormald/workflow"
+	"github.com/andrewwormald/workflow/examples"
 )
 
 type Example struct {
@@ -23,10 +24,10 @@ type Deps struct {
 	RoleScheduler workflow.RoleScheduler
 }
 
-func ExampleWorkflow(d Deps) *workflow.Workflow[Example, string] {
-	b := workflow.NewBuilder[Example, string]("callback example")
+func ExampleWorkflow(d Deps) *workflow.Workflow[Example, examples.Status] {
+	b := workflow.NewBuilder[Example, examples.Status]("callback example")
 
-	b.AddCallback("Start", func(ctx context.Context, r *workflow.Record[Example, string], reader io.Reader) (bool, error) {
+	b.AddCallback(examples.StatusStarted, func(ctx context.Context, r *workflow.Record[Example, examples.Status], reader io.Reader) (bool, error) {
 		b, err := io.ReadAll(reader)
 		if err != nil {
 			return false, err
@@ -41,7 +42,7 @@ func ExampleWorkflow(d Deps) *workflow.Workflow[Example, string] {
 		r.Object.EmailConfirmed = e.Confirmed
 
 		return true, nil
-	}, "End")
+	}, examples.StatusFollowedTheExample)
 
 	return b.Build(
 		d.EventStreamer,

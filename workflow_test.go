@@ -35,16 +35,30 @@ func (m MyType) ForeignID() string {
 	return strconv.FormatInt(m.UserID, 10)
 }
 
+type status int
+
 const (
-	StatusInitiated                = "Initiated"
-	StatusProfileCreated           = "Profile Created"
-	StatusEmailConfirmationSent    = "Email Confirmation Sent"
-	StatusEmailVerified            = "Email Verified"
-	StatusCellphoneNumberSubmitted = "Cellphone Number Submitted"
-	StatusOTPSent                  = "OTP Sent"
-	StatusOTPVerified              = "OTP Verified"
-	StatusCompleted                = "Completed"
+	StatusUnknown                  status = 0
+	StatusInitiated                status = 1
+	StatusProfileCreated           status = 2
+	StatusEmailConfirmationSent    status = 3
+	StatusEmailVerified            status = 4
+	StatusCellphoneNumberSubmitted status = 5
+	StatusOTPSent                  status = 6
+	StatusOTPVerified              status = 7
+	StatusCompleted                status = 8
+
+	StatusStart  status = 9
+	StatusMiddle status = 10
+	StatusEnd    status = 11
 )
+
+func (s status) String() string {
+	switch s {
+	default:
+		return "Unkown"
+	}
+}
 
 type ExternalEmailVerified struct {
 	IsVerified bool
@@ -65,14 +79,14 @@ func TestWorkflow(t *testing.T) {
 		cancel()
 	})
 
-	b := workflow.NewBuilder[MyType, string]("user sign up")
+	b := workflow.NewBuilder[MyType, status]("user sign up")
 	b.AddStep(StatusInitiated, createProfile, StatusProfileCreated)
 	b.AddStep(StatusProfileCreated, sendEmailConfirmation, StatusEmailConfirmationSent, workflow.WithParallelCount(5))
 	b.AddCallback(StatusEmailConfirmationSent, emailVerifiedCallback, StatusEmailVerified)
 	b.AddCallback(StatusEmailVerified, cellphoneNumberCallback, StatusCellphoneNumberSubmitted)
 	b.AddStep(StatusCellphoneNumberSubmitted, sendOTP, StatusOTPSent, workflow.WithParallelCount(5))
 	b.AddCallback(StatusOTPSent, otpCallback, StatusOTPVerified)
-	b.AddTimeout(StatusOTPVerified, workflow.DurationTimerFunc[MyType, string](time.Hour), waitForAccountCoolDown, StatusCompleted)
+	b.AddTimeout(StatusOTPVerified, workflow.DurationTimerFunc[MyType, status](time.Hour), waitForAccountCoolDown, StatusCompleted)
 
 	recordStore := memrecordstore.New()
 	timeoutStore := memtimeoutstore.New()
@@ -94,7 +108,7 @@ func TestWorkflow(t *testing.T) {
 		UserID: expectedUserID,
 	}
 
-	runID, err := wf.Trigger(ctx, fid, StatusInitiated, workflow.WithInitialValue[MyType, string](&mt))
+	runID, err := wf.Trigger(ctx, fid, StatusInitiated, workflow.WithInitialValue[MyType, status](&mt))
 	jtest.RequireNil(t, err)
 
 	// Once in the correct State, trigger third party callbacks
@@ -121,7 +135,7 @@ func TestWorkflow(t *testing.T) {
 
 	r, err := recordStore.Latest(ctx, "user sign up", fid)
 	jtest.RequireNil(t, err)
-	require.Equal(t, expectedFinalStatus, r.Status)
+	require.Equal(t, int(expectedFinalStatus), r.Status)
 
 	var actual MyType
 	err = workflow.Unmarshal(r.Object, &actual)
@@ -142,13 +156,13 @@ func TestTimeout(t *testing.T) {
 		cancel()
 	})
 
-	b := workflow.NewBuilder[MyType, string]("user sign up")
+	b := workflow.NewBuilder[MyType, status]("user sign up")
 
-	b.AddStep(StatusInitiated, func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+	b.AddStep(StatusInitiated, func(ctx context.Context, t *workflow.Record[MyType, status]) (bool, error) {
 		return true, nil
 	}, StatusProfileCreated)
 
-	b.AddTimeout(StatusProfileCreated, workflow.DurationTimerFunc[MyType, string](time.Hour), func(ctx context.Context, t *workflow.Record[MyType, string], now time.Time) (bool, error) {
+	b.AddTimeout(StatusProfileCreated, workflow.DurationTimerFunc[MyType, status](time.Hour), func(ctx context.Context, t *workflow.Record[MyType, status], now time.Time) (bool, error) {
 		return true, nil
 	}, StatusCompleted, workflow.WithTimeoutPollingFrequency(100*time.Millisecond))
 
@@ -197,18 +211,18 @@ var (
 	expectedOTPVerified       = true
 )
 
-func createProfile(ctx context.Context, mt *workflow.Record[MyType, string]) (bool, error) {
+func createProfile(ctx context.Context, mt *workflow.Record[MyType, status]) (bool, error) {
 	mt.Object.Profile = "Andrew Wormald"
 	fmt.Println("creating profile", *mt)
 	return true, nil
 }
 
-func sendEmailConfirmation(ctx context.Context, mt *workflow.Record[MyType, string]) (bool, error) {
+func sendEmailConfirmation(ctx context.Context, mt *workflow.Record[MyType, status]) (bool, error) {
 	fmt.Println("sending email confirmation", *mt)
 	return true, nil
 }
 
-func emailVerifiedCallback(ctx context.Context, mt *workflow.Record[MyType, string], r io.Reader) (bool, error) {
+func emailVerifiedCallback(ctx context.Context, mt *workflow.Record[MyType, status], r io.Reader) (bool, error) {
 	fmt.Println("email verification callback", *mt)
 
 	b, err := io.ReadAll(r)
@@ -229,7 +243,7 @@ func emailVerifiedCallback(ctx context.Context, mt *workflow.Record[MyType, stri
 	return true, nil
 }
 
-func cellphoneNumberCallback(ctx context.Context, mt *workflow.Record[MyType, string], r io.Reader) (bool, error) {
+func cellphoneNumberCallback(ctx context.Context, mt *workflow.Record[MyType, status], r io.Reader) (bool, error) {
 	fmt.Println("cell phone number callback", *mt)
 	b, err := io.ReadAll(r)
 	if err != nil {
@@ -249,13 +263,13 @@ func cellphoneNumberCallback(ctx context.Context, mt *workflow.Record[MyType, st
 	return true, nil
 }
 
-func sendOTP(ctx context.Context, mt *workflow.Record[MyType, string]) (bool, error) {
+func sendOTP(ctx context.Context, mt *workflow.Record[MyType, status]) (bool, error) {
 	fmt.Println("send otp", *mt)
 	mt.Object.OTP = expectedOTP
 	return true, nil
 }
 
-func otpCallback(ctx context.Context, mt *workflow.Record[MyType, string], r io.Reader) (bool, error) {
+func otpCallback(ctx context.Context, mt *workflow.Record[MyType, status], r io.Reader) (bool, error) {
 	fmt.Println("otp callback", *mt)
 	b, err := io.ReadAll(r)
 	if err != nil {
@@ -275,19 +289,19 @@ func otpCallback(ctx context.Context, mt *workflow.Record[MyType, string], r io.
 	return true, nil
 }
 
-func waitForAccountCoolDown(ctx context.Context, mt *workflow.Record[MyType, string], now time.Time) (bool, error) {
+func waitForAccountCoolDown(ctx context.Context, mt *workflow.Record[MyType, status], now time.Time) (bool, error) {
 	fmt.Println(fmt.Sprintf("completed waiting for account cool down %v at %v", *mt, now.String()))
 	return true, nil
 }
 
 func TestNot(t *testing.T) {
 	t.Run("Not - flip true to false", func(t *testing.T) {
-		fn := workflow.Not[string](func(ctx context.Context, s *workflow.Record[string, string]) (bool, error) {
+		fn := workflow.Not[string, status](func(ctx context.Context, s *workflow.Record[string, status]) (bool, error) {
 			return true, nil
 		})
 
 		s := "example"
-		r := workflow.Record[string, string]{
+		r := workflow.Record[string, status]{
 			Object: &s,
 		}
 		actual, err := fn(context.Background(), &r)
@@ -296,12 +310,12 @@ func TestNot(t *testing.T) {
 	})
 
 	t.Run("Not - flip false to true", func(t *testing.T) {
-		fn := workflow.Not[string](func(ctx context.Context, s *workflow.Record[string, string]) (bool, error) {
+		fn := workflow.Not[string, status](func(ctx context.Context, s *workflow.Record[string, status]) (bool, error) {
 			return false, nil
 		})
 
 		s := "example"
-		r := workflow.Record[string, string]{
+		r := workflow.Record[string, status]{
 			Object: &s,
 		}
 		actual, err := fn(context.Background(), &r)
@@ -310,12 +324,12 @@ func TestNot(t *testing.T) {
 	})
 
 	t.Run("Not - propagate error and do not flip result to true", func(t *testing.T) {
-		fn := workflow.Not[string](func(ctx context.Context, s *workflow.Record[string, string]) (bool, error) {
+		fn := workflow.Not[string, status](func(ctx context.Context, s *workflow.Record[string, status]) (bool, error) {
 			return false, errors.New("expected error")
 		})
 
 		s := "example"
-		r := workflow.Record[string, string]{
+		r := workflow.Record[string, status]{
 			Object: &s,
 		}
 		actual, err := fn(context.Background(), &r)
@@ -325,14 +339,14 @@ func TestNot(t *testing.T) {
 }
 
 func TestWorkflow_ScheduleTrigger(t *testing.T) {
-	b := workflow.NewBuilder[MyType, string]("sync users")
-	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+	b := workflow.NewBuilder[MyType, status]("sync users")
+	b.AddStep(StatusStart, func(ctx context.Context, t *workflow.Record[MyType, status]) (bool, error) {
 		return true, nil
-	}, "Collected users")
+	}, StatusMiddle)
 
-	b.AddStep("Collected users", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+	b.AddStep(StatusMiddle, func(ctx context.Context, t *workflow.Record[MyType, status]) (bool, error) {
 		return true, nil
-	}, "Synced users")
+	}, StatusEnd)
 
 	now := time.Date(2023, time.April, 9, 8, 30, 0, 0, time.UTC)
 	clock := clock_testing.NewFakeClock(now)
@@ -344,6 +358,7 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 		timeoutStore,
 		memrolescheduler.New(),
 		workflow.WithClock(clock),
+		workflow.WithDebugMode(),
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -353,7 +368,7 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	wf.Run(ctx)
 
 	go func() {
-		err := wf.ScheduleTrigger("andrew", "Started", "@monthly")
+		err := wf.ScheduleTrigger("andrew", StatusStart, "@monthly")
 		jtest.RequireNil(t, err)
 	}()
 
@@ -373,7 +388,7 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 	firstScheduled, err := recordStore.Latest(ctx, "sync users", "andrew")
 	jtest.RequireNil(t, err)
 
-	_, err = wf.Await(ctx, firstScheduled.ForeignID, firstScheduled.RunID, "Synced users")
+	_, err = wf.Await(ctx, firstScheduled.ForeignID, firstScheduled.RunID, StatusEnd)
 	jtest.RequireNil(t, err)
 
 	expectedTimestamp = time.Date(2023, time.June, 1, 0, 0, 0, 0, time.UTC)
@@ -389,10 +404,10 @@ func TestWorkflow_ScheduleTrigger(t *testing.T) {
 }
 
 func TestWorkflow_ScheduleTriggerShutdown(t *testing.T) {
-	b := workflow.NewBuilder[MyType, string]("example")
-	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+	b := workflow.NewBuilder[MyType, status]("example")
+	b.AddStep(StatusStart, func(ctx context.Context, t *workflow.Record[MyType, status]) (bool, error) {
 		return true, nil
-	}, "End")
+	}, StatusEnd)
 
 	wf := b.Build(
 		memstreamer.New(),
@@ -411,7 +426,7 @@ func TestWorkflow_ScheduleTriggerShutdown(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		wg.Done()
-		err := wf.ScheduleTrigger("andrew", "Started", "@monthly")
+		err := wf.ScheduleTrigger("andrew", StatusStart, "@monthly")
 		jtest.RequireNil(t, err)
 	}()
 
@@ -420,28 +435,28 @@ func TestWorkflow_ScheduleTriggerShutdown(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	require.Equal(t, map[string]workflow.State{
-		"example-Started-andrew-scheduler-@monthly": workflow.StateRunning,
-		"example-started-to-end-consumer-1-of-1":    workflow.StateRunning,
+		"example-9-andrew-scheduler-@monthly": workflow.StateRunning,
+		"example-9-to-11-consumer-1-of-1":     workflow.StateRunning,
 	}, wf.States())
 
 	wf.Stop()
 
 	require.Equal(t, map[string]workflow.State{
-		"example-Started-andrew-scheduler-@monthly": workflow.StateShutdown,
-		"example-started-to-end-consumer-1-of-1":    workflow.StateShutdown,
+		"example-9-andrew-scheduler-@monthly": workflow.StateShutdown,
+		"example-9-to-11-consumer-1-of-1":     workflow.StateShutdown,
 	}, wf.States())
 }
 
 func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
-	b := workflow.NewBuilder[MyType, string]("sync users")
+	b := workflow.NewBuilder[MyType, status]("sync users")
 
-	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+	b.AddStep(StatusStart, func(ctx context.Context, t *workflow.Record[MyType, status]) (bool, error) {
 		return true, nil
-	}, "Collected users")
+	}, StatusMiddle)
 
-	b.AddStep("Collected users", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+	b.AddStep(StatusMiddle, func(ctx context.Context, t *workflow.Record[MyType, status]) (bool, error) {
 		return true, nil
-	}, "Synced users")
+	}, StatusEnd)
 
 	recordStore := memrecordstore.New()
 	timeoutStore := memtimeoutstore.New()
@@ -456,25 +471,25 @@ func TestWorkflow_ErrWorkflowNotRunning(t *testing.T) {
 		cancel()
 	})
 
-	_, err := wf.Trigger(ctx, "andrew", "Started")
+	_, err := wf.Trigger(ctx, "andrew", StatusStart)
 	jtest.Require(t, workflow.ErrWorkflowNotRunning, err)
 
-	err = wf.ScheduleTrigger("andrew", "Started", "@monthly")
+	err = wf.ScheduleTrigger("andrew", StatusStart, "@monthly")
 	jtest.Require(t, workflow.ErrWorkflowNotRunning, err)
 }
 
 func TestWorkflow_TestingRequire(t *testing.T) {
-	b := workflow.NewBuilder[MyType, string]("sync users")
+	b := workflow.NewBuilder[MyType, status]("sync users")
 
-	b.AddStep("Started", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+	b.AddStep(StatusStart, func(ctx context.Context, t *workflow.Record[MyType, status]) (bool, error) {
 		t.Object.Email = "andrew@workflow.com"
 		return true, nil
-	}, "Updated email")
+	}, StatusMiddle)
 
-	b.AddStep("Updated email", func(ctx context.Context, t *workflow.Record[MyType, string]) (bool, error) {
+	b.AddStep(StatusMiddle, func(ctx context.Context, t *workflow.Record[MyType, status]) (bool, error) {
 		t.Object.Cellphone = "+44 349 8594"
 		return true, nil
-	}, "Updated cellphone")
+	}, StatusEnd)
 
 	recordStore := memrecordstore.New()
 	timeoutStore := memtimeoutstore.New()
@@ -492,19 +507,19 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 	wf.Run(ctx)
 
 	foreignID := "andrew"
-	runID, err := wf.Trigger(ctx, foreignID, "Started")
+	runID, err := wf.Trigger(ctx, foreignID, StatusStart)
 	jtest.RequireNil(t, err)
 
 	expected := MyType{
 		Email: "andrew@workflow.com",
 	}
-	workflow.Require(t, wf, foreignID, runID, "Updated email", expected)
+	workflow.Require(t, wf, foreignID, runID, StatusMiddle, expected)
 
 	expected = MyType{
 		Email:     "andrew@workflow.com",
 		Cellphone: "+44 349 8594",
 	}
-	workflow.Require(t, wf, foreignID, runID, "Updated cellphone", expected)
+	workflow.Require(t, wf, foreignID, runID, StatusEnd, expected)
 }
 
 func TestTimeTimerFunc(t *testing.T) {
@@ -513,15 +528,15 @@ func TestTimeTimerFunc(t *testing.T) {
 		Yang bool
 	}
 
-	b := workflow.NewBuilder[YinYang, string]("timer_func")
+	b := workflow.NewBuilder[YinYang, status]("timer_func")
 
 	launchDate := time.Date(1992, time.April, 9, 0, 0, 0, 0, time.UTC)
-	b.AddTimeout("Pending", workflow.TimeTimerFunc[YinYang, string](launchDate), func(ctx context.Context, t *workflow.Record[YinYang, string], now time.Time) (bool, error) {
+	b.AddTimeout(StatusStart, workflow.TimeTimerFunc[YinYang, status](launchDate), func(ctx context.Context, t *workflow.Record[YinYang, status], now time.Time) (bool, error) {
 		t.Object.Yin = true
 		t.Object.Yang = true
 		return true, nil
 	},
-		"Launched",
+		StatusEnd,
 	)
 
 	now := time.Date(1991, time.December, 25, 8, 30, 0, 0, time.UTC)
@@ -542,10 +557,10 @@ func TestTimeTimerFunc(t *testing.T) {
 	})
 	wf.Run(ctx)
 
-	runID, err := wf.Trigger(ctx, "Andrew Wormald", "Pending")
+	runID, err := wf.Trigger(ctx, "Andrew Wormald", StatusStart)
 	jtest.RequireNil(t, err)
 
-	workflow.AwaitTimeoutInsert(t, wf, "Andrew Wormald", runID, "Pending")
+	workflow.AwaitTimeoutInsert(t, wf, "Andrew Wormald", runID, StatusStart)
 
 	clock.SetTime(launchDate)
 
@@ -553,32 +568,32 @@ func TestTimeTimerFunc(t *testing.T) {
 		Yin:  true,
 		Yang: true,
 	}
-	workflow.Require(t, wf, "Andrew Wormald", runID, "Launched", expected)
+	workflow.Require(t, wf, "Andrew Wormald", runID, StatusEnd, expected)
 }
 
 func TestInternalState(t *testing.T) {
-	b := workflow.NewBuilder[string, string]("example")
-	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[string, string]) (bool, error) {
+	b := workflow.NewBuilder[string, status]("example")
+	b.AddStep(StatusStart, func(ctx context.Context, r *workflow.Record[string, status]) (bool, error) {
 		return true, nil
-	}, "Middle")
+	}, StatusMiddle)
 
-	b.AddStep("Middle", func(ctx context.Context, r *workflow.Record[string, string]) (bool, error) {
+	b.AddStep(StatusMiddle, func(ctx context.Context, r *workflow.Record[string, status]) (bool, error) {
 		return true, nil
-	}, "End", workflow.WithParallelCount(3))
+	}, StatusEnd, workflow.WithParallelCount(3))
 
-	b.AddTimeout("Random", workflow.DurationTimerFunc[string, string](time.Hour), func(ctx context.Context, r *workflow.Record[string, string], now time.Time) (bool, error) {
+	b.AddTimeout(StatusInitiated, workflow.DurationTimerFunc[string, status](time.Hour), func(ctx context.Context, r *workflow.Record[string, status], now time.Time) (bool, error) {
 		return true, nil
-	}, "End")
+	}, StatusCompleted)
 
 	b.ConnectWorkflow(
 		"other workflow",
-		"Completed",
+		int(StatusCompleted),
 		memstreamer.New(),
 		func(ctx context.Context, e *workflow.Event) (string, error) { return e.ForeignID, nil },
-		func(ctx context.Context, r *workflow.Record[string, string], e *workflow.Event) (bool, error) {
+		func(ctx context.Context, r *workflow.Record[string, status], e *workflow.Event) (bool, error) {
 			return true, nil
 		},
-		"End",
+		StatusEnd,
 		workflow.WithParallelCount(2),
 	)
 
@@ -599,26 +614,26 @@ func TestInternalState(t *testing.T) {
 	time.Sleep(time.Second)
 
 	require.Equal(t, map[string]workflow.State{
-		"example-middle-to-end-consumer-1-of-3":                             workflow.StateRunning,
-		"example-middle-to-end-consumer-2-of-3":                             workflow.StateRunning,
-		"example-middle-to-end-consumer-3-of-3":                             workflow.StateRunning,
-		"example-start-to-middle-consumer-1-of-1":                           workflow.StateRunning,
-		"example-random-timeout-auto-inserter-consumer":                     workflow.StateRunning,
-		"example-random-timeout-consumer":                                   workflow.StateRunning,
-		"other_workflow-completed-to-example-end-connector-consumer-1-of-2": workflow.StateRunning,
-		"other_workflow-completed-to-example-end-connector-consumer-2-of-2": workflow.StateRunning,
+		"example-10-to-11-consumer-1-of-3":                         workflow.StateRunning,
+		"example-10-to-11-consumer-2-of-3":                         workflow.StateRunning,
+		"example-10-to-11-consumer-3-of-3":                         workflow.StateRunning,
+		"example-9-to-10-consumer-1-of-1":                          workflow.StateRunning,
+		"example-1-timeout-auto-inserter-consumer":                 workflow.StateRunning,
+		"example-1-timeout-consumer":                               workflow.StateRunning,
+		"other_workflow-8-to-example-11-connector-consumer-1-of-2": workflow.StateRunning,
+		"other_workflow-8-to-example-11-connector-consumer-2-of-2": workflow.StateRunning,
 	}, wf.States())
 
 	wf.Stop()
 	require.Equal(t, map[string]workflow.State{
-		"example-start-to-middle-consumer-1-of-1":                           workflow.StateShutdown,
-		"example-middle-to-end-consumer-1-of-3":                             workflow.StateShutdown,
-		"example-middle-to-end-consumer-2-of-3":                             workflow.StateShutdown,
-		"example-middle-to-end-consumer-3-of-3":                             workflow.StateShutdown,
-		"example-random-timeout-auto-inserter-consumer":                     workflow.StateShutdown,
-		"example-random-timeout-consumer":                                   workflow.StateShutdown,
-		"other_workflow-completed-to-example-end-connector-consumer-1-of-2": workflow.StateShutdown,
-		"other_workflow-completed-to-example-end-connector-consumer-2-of-2": workflow.StateShutdown,
+		"example-10-to-11-consumer-1-of-3":                         workflow.StateShutdown,
+		"example-10-to-11-consumer-2-of-3":                         workflow.StateShutdown,
+		"example-10-to-11-consumer-3-of-3":                         workflow.StateShutdown,
+		"example-9-to-10-consumer-1-of-1":                          workflow.StateShutdown,
+		"example-1-timeout-auto-inserter-consumer":                 workflow.StateShutdown,
+		"example-1-timeout-consumer":                               workflow.StateShutdown,
+		"other_workflow-8-to-example-11-connector-consumer-1-of-2": workflow.StateShutdown,
+		"other_workflow-8-to-example-11-connector-consumer-2-of-2": workflow.StateShutdown,
 	}, wf.States())
 }
 
@@ -630,11 +645,11 @@ func TestConnectStream(t *testing.T) {
 		Val string
 	}
 
-	a := workflow.NewBuilder[typeA, string]("workflow A")
-	a.AddStep("Begin", func(ctx context.Context, r *workflow.Record[typeA, string]) (bool, error) {
+	a := workflow.NewBuilder[typeA, status]("workflow A")
+	a.AddStep(StatusInitiated, func(ctx context.Context, r *workflow.Record[typeA, status]) (bool, error) {
 		r.Object.Val = "workflow A set this value"
 		return true, nil
-	}, "Completed")
+	}, StatusCompleted)
 
 	workflowA := a.Build(
 		streamerA,
@@ -649,18 +664,18 @@ func TestConnectStream(t *testing.T) {
 	type typeB struct {
 		Val string
 	}
-	b := workflow.NewBuilder[typeB, string]("workflow B")
-	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[typeB, string]) (bool, error) {
+	b := workflow.NewBuilder[typeB, status]("workflow B")
+	b.AddStep(StatusStart, func(ctx context.Context, r *workflow.Record[typeB, status]) (bool, error) {
 		return true, nil
-	}, "Middle")
+	}, StatusMiddle)
 	b.ConnectWorkflow(
 		workflowA.Name,
-		"Completed",
+		int(StatusCompleted),
 		streamerA,
 		func(ctx context.Context, e *workflow.Event) (string, error) {
 			return e.ForeignID, nil
 		},
-		func(ctx context.Context, r *workflow.Record[typeB, string], e *workflow.Event) (bool, error) {
+		func(ctx context.Context, r *workflow.Record[typeB, status], e *workflow.Event) (bool, error) {
 			wr, err := workflow.UnmarshalRecord(e.Body)
 			jtest.RequireNil(t, err)
 
@@ -673,7 +688,7 @@ func TestConnectStream(t *testing.T) {
 
 			return true, nil
 		},
-		"End",
+		StatusEnd,
 	)
 
 	workflowB := b.Build(
@@ -688,20 +703,20 @@ func TestConnectStream(t *testing.T) {
 	foreignID := "andrewwormald"
 
 	// Start workflowB from "Start"
-	runID, err := workflowB.Trigger(ctx, foreignID, "Start")
+	runID, err := workflowB.Trigger(ctx, foreignID, StatusStart)
 	jtest.RequireNil(t, err)
 
 	// Wait until workflow B is at "Middle" where we expect workflowB to wait for workflowA
-	_, err = workflowB.Await(ctx, foreignID, runID, "Middle")
+	_, err = workflowB.Await(ctx, foreignID, runID, StatusMiddle)
 	jtest.RequireNil(t, err)
 
 	// Trigger workflowA
-	_, err = workflowA.Trigger(ctx, foreignID, "Begin")
+	_, err = workflowA.Trigger(ctx, foreignID, StatusInitiated)
 	jtest.RequireNil(t, err)
 
-	// Wait until workflowB reaches "End" before finishing the test
-	// After reaching "End" we know we merged an event from workflowA into workflowB in order for workflowB to complete.
-	workflow.Require(t, workflowB, foreignID, runID, "End", typeB{
+	// Wait until workflowB reaches StatusEnd before finishing the test
+	// After reaching StatusEnd we know we merged an event from workflowA into workflowB in order for workflowB to complete.
+	workflow.Require(t, workflowB, foreignID, runID, StatusEnd, typeB{
 		Val: "workflow A set this value",
 	})
 }
@@ -714,11 +729,11 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 		Val string
 	}
 
-	a := workflow.NewBuilder[typeA, string]("workflow A")
-	a.AddStep("Begin", func(ctx context.Context, r *workflow.Record[typeA, string]) (bool, error) {
+	a := workflow.NewBuilder[typeA, status]("workflow A")
+	a.AddStep(StatusInitiated, func(ctx context.Context, r *workflow.Record[typeA, status]) (bool, error) {
 		r.Object.Val = "workflow A set this value"
 		return true, nil
-	}, "Completed")
+	}, StatusCompleted)
 
 	workflowA := a.Build(
 		streamerA,
@@ -733,18 +748,18 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 	type typeB struct {
 		Val string
 	}
-	b := workflow.NewBuilder[typeB, string]("workflow B")
-	b.AddStep("Start", func(ctx context.Context, r *workflow.Record[typeB, string]) (bool, error) {
+	b := workflow.NewBuilder[typeB, status]("workflow B")
+	b.AddStep(StatusStart, func(ctx context.Context, r *workflow.Record[typeB, status]) (bool, error) {
 		return true, nil
-	}, "Middle")
+	}, StatusMiddle)
 	b.ConnectWorkflow(
 		workflowA.Name,
-		"Completed",
+		int(StatusCompleted),
 		streamerA,
 		func(ctx context.Context, e *workflow.Event) (string, error) {
 			return e.ForeignID, nil
 		},
-		func(ctx context.Context, r *workflow.Record[typeB, string], e *workflow.Event) (bool, error) {
+		func(ctx context.Context, r *workflow.Record[typeB, status], e *workflow.Event) (bool, error) {
 			wr, err := workflow.UnmarshalRecord(e.Body)
 			jtest.RequireNil(t, err)
 
@@ -757,7 +772,7 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 
 			return true, nil
 		},
-		"End",
+		StatusEnd,
 		workflow.WithParallelCount(2),
 	)
 
@@ -773,20 +788,20 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 	foreignID := "andrewwormald"
 
 	// Start workflowB from "Start"
-	runID, err := workflowB.Trigger(ctx, foreignID, "Start")
+	runID, err := workflowB.Trigger(ctx, foreignID, StatusStart)
 	jtest.RequireNil(t, err)
 
 	// Wait until workflow B is at "Middle" where we expect workflowB to wait for workflowA
-	_, err = workflowB.Await(ctx, foreignID, runID, "Middle")
+	_, err = workflowB.Await(ctx, foreignID, runID, StatusMiddle)
 	jtest.RequireNil(t, err)
 
 	// Trigger workflowA
-	_, err = workflowA.Trigger(ctx, foreignID, "Begin")
+	_, err = workflowA.Trigger(ctx, foreignID, StatusInitiated)
 	jtest.RequireNil(t, err)
 
 	// Wait until workflowB reaches "End" before finishing the test
 	// After reaching "End" we know we merged an event from workflowA into workflowB in order for workflowB to complete.
-	workflow.Require(t, workflowB, foreignID, runID, "End", typeB{
+	workflow.Require(t, workflowB, foreignID, runID, StatusEnd, typeB{
 		Val: "workflow A set this value",
 	})
 }

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -16,7 +17,7 @@ func (w *Workflow[Type, Status]) Await(ctx context.Context, foreignID, runID str
 		pollFrequency = opt.pollFrequency
 	}
 
-	role := makeRole("await", w.Name, string(status), foreignID)
+	role := makeRole("await", w.Name, fmt.Sprintf("%v", int(status)), foreignID)
 	return awaitWorkflowStatusByForeignID[Type, Status](ctx, w, status, foreignID, runID, role, pollFrequency)
 }
 

@@ -14,27 +14,27 @@ import (
 // workflow.
 type ConnectorFilter func(ctx context.Context, e *Event) (foreignID string, err error)
 
-type ConnectorConsumerFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status], e *Event) (bool, error)
+type ConnectorConsumerFunc[Type any, Status StatusType] func(ctx context.Context, r *Record[Type, Status], e *Event) (bool, error)
 
-type connectorConfig[Type any, Status ~string] struct {
+type connectorConfig[Type any, Status StatusType] struct {
 	workflowName     string
-	status           string
+	status           int
 	stream           EventStreamer
 	filter           ConnectorFilter
 	consumer         ConnectorConsumerFunc[Type, Status]
-	to               string
+	to               Status
 	pollingFrequency time.Duration
 	errBackOff       time.Duration
 	parallelCount    int
 }
 
-func connectorConsumer[Type any, Status ~string](w *Workflow[Type, Status], cc *connectorConfig[Type, Status], shard, totalShards int) {
+func connectorConsumer[Type any, Status StatusType](w *Workflow[Type, Status], cc *connectorConfig[Type, Status], shard, totalShards int) {
 	role := makeRole(
 		cc.workflowName,
-		cc.status,
+		fmt.Sprintf("%v", cc.status),
 		"to",
 		w.Name,
-		cc.to,
+		fmt.Sprintf("%v", int(cc.to)),
 		"connector",
 		"consumer",
 		fmt.Sprintf("%v", shard),
@@ -68,7 +68,7 @@ func connectorConsumer[Type any, Status ~string](w *Workflow[Type, Status], cc *
 	}, errBackOff)
 }
 
-func consumeExternalWorkflow[Type any, Status ~string](ctx context.Context, stream Consumer, w *Workflow[Type, Status], filter ConnectorFilter, consumerFunc ConnectorConsumerFunc[Type, Status], to string) error {
+func consumeExternalWorkflow[Type any, Status StatusType](ctx context.Context, stream Consumer, w *Workflow[Type, Status], filter ConnectorFilter, consumerFunc ConnectorConsumerFunc[Type, Status], to Status) error {
 	for {
 		if ctx.Err() != nil {
 			return errors.Wrap(ErrWorkflowShutdown, "")
@@ -126,12 +126,12 @@ func consumeExternalWorkflow[Type any, Status ~string](ctx context.Context, stre
 				return err
 			}
 
-			isEnd := w.endPoints[Status(to)]
+			isEnd := w.endPoints[to]
 			wr := &WireRecord{
 				RunID:        record.RunID,
 				WorkflowName: record.WorkflowName,
 				ForeignID:    record.ForeignID,
-				Status:       to,
+				Status:       int(to),
 				IsStart:      false,
 				IsEnd:        isEnd,
 				Object:       b,

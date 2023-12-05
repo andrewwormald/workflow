@@ -3,10 +3,11 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/log"
-	"time"
 )
 
 // ConsumerFunc provides a record that is expected to be modified if the data needs to change. If true is returned with
@@ -14,9 +15,9 @@ import (
 // the record will not be stored and the event will be skipped and move onto the next event. If a non-nil error is
 // returned then the consumer will back off and try again until a nil error occurs or the retry max has been reached
 // if a Dead Letter Queue has been configured for the workflow.
-type ConsumerFunc[Type any, Status ~string] func(ctx context.Context, r *Record[Type, Status]) (bool, error)
+type ConsumerFunc[Type any, Status StatusType] func(ctx context.Context, r *Record[Type, Status]) (bool, error)
 
-type consumerConfig[Type any, Status ~string] struct {
+type consumerConfig[Type any, Status StatusType] struct {
 	PollingFrequency  time.Duration
 	ErrBackOff        time.Duration
 	DestinationStatus Status
@@ -24,12 +25,12 @@ type consumerConfig[Type any, Status ~string] struct {
 	ParallelCount     int
 }
 
-func consumer[Type any, Status ~string](w *Workflow[Type, Status], currentStatus Status, p consumerConfig[Type, Status], shard, totalShards int) {
+func consumer[Type any, Status StatusType](w *Workflow[Type, Status], currentStatus Status, p consumerConfig[Type, Status], shard, totalShards int) {
 	role := makeRole(
 		w.Name,
-		string(currentStatus),
+		fmt.Sprintf("%v", int(currentStatus)),
 		"to",
-		string(p.DestinationStatus),
+		fmt.Sprintf("%v", int(p.DestinationStatus)),
 		"consumer",
 		fmt.Sprintf("%v", shard),
 		"of",
@@ -54,13 +55,13 @@ func consumer[Type any, Status ~string](w *Workflow[Type, Status], currentStatus
 	}, p.ErrBackOff)
 }
 
-func runStepConsumerForever[Type any, Status ~string](ctx context.Context, w *Workflow[Type, Status], p consumerConfig[Type, Status], status Status, role string, shard, totalShards int) error {
+func runStepConsumerForever[Type any, Status StatusType](ctx context.Context, w *Workflow[Type, Status], p consumerConfig[Type, Status], status Status, role string, shard, totalShards int) error {
 	pollFrequency := w.defaultPollingFrequency
 	if p.PollingFrequency.Nanoseconds() != 0 {
 		pollFrequency = p.PollingFrequency
 	}
 
-	topic := Topic(w.Name, string(status))
+	topic := Topic(w.Name, int(status))
 	stream := w.eventStreamerFn.NewConsumer(
 		topic,
 		role,
@@ -139,7 +140,7 @@ func wait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func consume[Type any, Status ~string](ctx context.Context, wr *WireRecord, cf ConsumerFunc[Type, Status], ack Ack, destinationStatus Status, endPoints map[Status]bool, es EventStreamer, rs RecordStore) error {
+func consume[Type any, Status StatusType](ctx context.Context, wr *WireRecord, cf ConsumerFunc[Type, Status], ack Ack, destinationStatus Status, endPoints map[Status]bool, es EventStreamer, rs RecordStore) error {
 	var t Type
 	err := Unmarshal(wr.Object, &t)
 	if err != nil {
@@ -173,7 +174,7 @@ func consume[Type any, Status ~string](ctx context.Context, wr *WireRecord, cf C
 			RunID:        record.RunID,
 			WorkflowName: record.WorkflowName,
 			ForeignID:    record.ForeignID,
-			Status:       string(destinationStatus),
+			Status:       int(destinationStatus),
 			IsStart:      false,
 			IsEnd:        isEnd,
 			Object:       b,
