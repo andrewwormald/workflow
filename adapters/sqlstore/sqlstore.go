@@ -16,25 +16,17 @@ type SQLStore struct {
 	recordTableName    string
 	recordCols         string
 	recordSelectPrefix string
-
-	timeoutTableName    string
-	timeoutCols         string
-	timeoutSelectPrefix string
 }
 
-func New(recordTableName string, timeoutTableName string, writer *sql.DB, reader *sql.DB) *SQLStore {
+func New(writer *sql.DB, reader *sql.DB, tableName string) *SQLStore {
 	e := &SQLStore{
-		recordTableName:  recordTableName,
-		timeoutTableName: timeoutTableName,
-		writer:           writer,
-		reader:           reader,
+		writer:          writer,
+		reader:          reader,
+		recordTableName: tableName,
 	}
 
 	e.recordCols = " `id`, `workflow_name`, `foreign_id`, `run_id`, `status`, `object`, `is_start`, `is_end`, `created_at` "
 	e.recordSelectPrefix = " select " + e.recordCols + " from " + e.recordTableName + " where "
-
-	e.timeoutCols = " `id`, `workflow_name`, `foreign_id`, `run_id`, `status`, `completed`, `expire_at`, `created_at` "
-	e.timeoutSelectPrefix = " select " + e.timeoutCols + " from " + e.timeoutTableName + " where "
 
 	return e
 }
