@@ -10,8 +10,8 @@ import (
 	"github.com/andrewwormald/workflow"
 )
 
-func (s *SQLStore) create(ctx context.Context, workflowName, foreignID, runID string, status int, object []byte, isStart, isEnd bool) (int64, error) {
-	resp, err := s.writer.ExecContext(ctx, "insert into "+s.recordTableName+" set "+
+func (s *SQLStore) create(ctx context.Context, tx *sql.Tx, workflowName, foreignID, runID string, status int, object []byte, isStart, isEnd bool) (int64, error) {
+	resp, err := tx.ExecContext(ctx, "insert into "+s.recordTableName+" set "+
 		" workflow_name=?, foreign_id=?, run_id=?, status=?, object=?, is_start=?, is_end=?, created_at=now() ",
 		workflowName,
 		foreignID,

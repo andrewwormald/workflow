@@ -49,14 +49,24 @@ func testStore_Latest(t *testing.T, store workflow.RecordStore) {
 		Object:       b,
 		CreatedAt:    createdAt,
 	}
-	err = store.Store(ctx, wr)
+
+	var counter int
+	counterPtr := &counter
+	eventEmitter := func(id int64) error {
+		*counterPtr += 1
+		return nil
+	}
+
+	err = store.Store(ctx, wr, eventEmitter)
 	jtest.RequireNil(t, err)
 
 	wr.Status = int(statusEnd)
 	wr.IsStart = false
 	wr.IsEnd = true
-	err = store.Store(ctx, wr)
+	err = store.Store(ctx, wr, eventEmitter)
 	jtest.RequireNil(t, err)
+
+	require.Equal(t, 2, *counterPtr)
 
 	expected := workflow.WireRecord{
 		WorkflowName: workflowName,

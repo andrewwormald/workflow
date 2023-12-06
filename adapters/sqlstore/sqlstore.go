@@ -33,9 +33,24 @@ func New(writer *sql.DB, reader *sql.DB, tableName string) *SQLStore {
 
 var _ workflow.RecordStore = (*SQLStore)(nil)
 
-func (s *SQLStore) Store(ctx context.Context, r *workflow.WireRecord) error {
-	_, err := s.create(ctx, r.WorkflowName, r.ForeignID, r.RunID, r.Status, r.Object, r.IsStart, r.IsEnd)
-	return err
+func (s *SQLStore) Store(ctx context.Context, r *workflow.WireRecord, eventEmitter workflow.EventEmitter) error {
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	id, err := s.create(ctx, tx, r.WorkflowName, r.ForeignID, r.RunID, r.Status, r.Object, r.IsStart, r.IsEnd)
+	if err != nil {
+		return err
+	}
+
+	err = eventEmitter(id)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (s *SQLStore) Latest(ctx context.Context, workflowName, foreignID string) (*workflow.WireRecord, error) {
