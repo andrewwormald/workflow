@@ -209,28 +209,28 @@ func (w *Workflow[Type, Status]) Stop() {
 }
 
 func update(ctx context.Context, streamer EventStreamer, store RecordStore, wr *WireRecord) error {
-	body, err := wr.ProtoMarshal()
-	if err != nil {
-		return err
-	}
+	return store.Store(ctx, wr, func(id int64) error {
+		// Update ID in-case the store is an append only store and the ID changes with every update
+		wr.ID = id
 
-	e := Event{
-		ForeignID: wr.ForeignID,
-		Body:      body,
-		Headers:   make(map[string]string),
-	}
+		body, err := wr.ProtoMarshal()
+		if err != nil {
+			return err
+		}
 
-	err = store.Store(ctx, wr)
-	if err != nil {
-		return err
-	}
+		e := Event{
+			ForeignID: wr.ForeignID,
+			Body:      body,
+			Headers:   make(map[string]string),
+		}
 
-	topic := Topic(wr.WorkflowName, wr.Status)
-	producer := streamer.NewProducer(topic)
-	err = producer.Send(ctx, &e)
-	if err != nil {
-		return err
-	}
+		topic := Topic(wr.WorkflowName, wr.Status)
+		producer := streamer.NewProducer(topic)
+		err = producer.Send(ctx, &e)
+		if err != nil {
+			return err
+		}
 
-	return producer.Close()
+		return producer.Close()
+	})
 }

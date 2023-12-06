@@ -3,9 +3,10 @@ package memrecordstore
 import (
 	"context"
 	"fmt"
+	"sync"
+
 	"github.com/luno/jettison/errors"
 	"k8s.io/utils/clock"
-	"sync"
 
 	"github.com/andrewwormald/workflow"
 )
@@ -50,9 +51,16 @@ type Store struct {
 	timeouts           []*workflow.Timeout
 }
 
-func (s *Store) Store(ctx context.Context, record *workflow.WireRecord) error {
+func (s *Store) Store(ctx context.Context, record *workflow.WireRecord, emitter workflow.EventEmitter) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	record.ID = int64(len(s.workflowIndex[record.WorkflowName])) + 1
+
+	err := emitter(record.ID)
+	if err != nil {
+		return err
+	}
 
 	uk := uniqueKey(record.WorkflowName, record.ForeignID)
 	s.keyIndex[uk] = append(s.keyIndex[uk], record)
