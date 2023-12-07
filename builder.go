@@ -152,7 +152,7 @@ func (b *Builder[Type, Status]) AddTimeout(from Status, timer TimerFunc[Type, St
 	b.workflow.timeouts[from] = timeouts
 }
 
-func (b *Builder[Type, Status]) ConnectWorkflow(workflowName string, status int, stream EventStreamer, filter ConnectorFilter, consumer ConnectorConsumerFunc[Type, Status], to Status, opts ...StepOption) {
+func (b *Builder[Type, Status]) ConnectWorkflow(cd ConnectionDetails, filter ConnectorFilter, from Status, consumer ConnectorConsumerFunc[Type, Status], to Status, opts ...StepOption) {
 	var stepOptions stepOptions
 	for _, opt := range opts {
 		opt(&stepOptions)
@@ -160,10 +160,11 @@ func (b *Builder[Type, Status]) ConnectWorkflow(workflowName string, status int,
 
 	b.workflow.validStatuses[to] = true
 	b.workflow.connectorConfigs = append(b.workflow.connectorConfigs, connectorConfig[Type, Status]{
-		workflowName:     workflowName,
-		status:           status,
-		stream:           stream,
+		workflowName:     cd.WorkflowName,
+		status:           cd.Status,
+		stream:           cd.Stream,
 		filter:           filter,
+		from:             from,
 		consumer:         consumer,
 		to:               to,
 		pollingFrequency: stepOptions.pollingFrequency,

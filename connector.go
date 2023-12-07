@@ -16,12 +16,19 @@ type ConnectorFilter func(ctx context.Context, e *Event) (foreignID string, err 
 
 type ConnectorConsumerFunc[Type any, Status StatusType] func(ctx context.Context, r *Record[Type, Status], e *Event) (bool, error)
 
+type ConnectionDetails struct {
+	WorkflowName string
+	Status       int
+	Stream       EventStreamer
+}
+
 type connectorConfig[Type any, Status StatusType] struct {
 	workflowName     string
 	status           int
 	stream           EventStreamer
 	filter           ConnectorFilter
 	consumer         ConnectorConsumerFunc[Type, Status]
+	from             Status
 	to               Status
 	pollingFrequency time.Duration
 	errBackOff       time.Duration
@@ -32,8 +39,10 @@ func connectorConsumer[Type any, Status StatusType](w *Workflow[Type, Status], c
 	role := makeRole(
 		cc.workflowName,
 		fmt.Sprintf("%v", cc.status),
-		"to",
+		"connection",
 		w.Name,
+		fmt.Sprintf("%v", int(cc.from)),
+		"to",
 		fmt.Sprintf("%v", int(cc.to)),
 		"connector",
 		"consumer",

@@ -83,17 +83,12 @@ func runStepConsumerForever[Type any, Status StatusType](ctx context.Context, w 
 			return err
 		}
 
-		wr, err := UnmarshalRecord(e.Body)
+		latest, err := w.recordStore.Latest(ctx, e.Record.WorkflowName, e.Record.ForeignID)
 		if err != nil {
 			return err
 		}
 
-		latest, err := w.recordStore.Latest(ctx, wr.WorkflowName, wr.ForeignID)
-		if err != nil {
-			return err
-		}
-
-		if latest.Status != wr.Status {
+		if latest.Status != e.Record.Status {
 			err = ack()
 			if err != nil {
 				return err
@@ -101,7 +96,7 @@ func runStepConsumerForever[Type any, Status StatusType](ctx context.Context, w 
 			continue
 		}
 
-		if latest.RunID != wr.RunID {
+		if latest.RunID != e.Record.RunID {
 			err = ack()
 			if err != nil {
 				return err
@@ -109,7 +104,7 @@ func runStepConsumerForever[Type any, Status StatusType](ctx context.Context, w 
 			continue
 		}
 
-		err = consume(ctx, wr, p.Consumer, ack, p.DestinationStatus, w.endPoints, w.eventStreamerFn, w.recordStore)
+		err = consume(ctx, e.Record, p.Consumer, ack, p.DestinationStatus, w.endPoints, w.eventStreamerFn, w.recordStore)
 		if err != nil {
 			return err
 		}

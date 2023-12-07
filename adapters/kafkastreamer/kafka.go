@@ -3,11 +3,12 @@ package kafkastreamer
 import (
 	"context"
 	"fmt"
-	"github.com/andrewwormald/workflow"
-	"github.com/luno/jettison/errors"
 	"time"
 
+	"github.com/luno/jettison/errors"
 	"github.com/segmentio/kafka-go"
+
+	"github.com/andrewwormald/workflow"
 )
 
 func New(brokers []string) *StreamConstructor {
@@ -43,25 +44,25 @@ type Producer struct {
 
 var _ workflow.Producer = (*Producer)(nil)
 
-func (p *Producer) Send(ctx context.Context, e *workflow.Event) error {
+func (p *Producer) Send(ctx context.Context, wr *workflow.WireRecord) error {
 	for ctx.Err() == nil {
 		ctx, cancel := context.WithTimeout(ctx, p.WriterTimeout)
 		defer cancel()
 
-		msgData, err := e.ProtoMarshal()
-		if err != nil {
-			return err
-		}
-
 		var headers []kafka.Header
-		for key, value := range e.Headers {
+		for key, value := range wr.Headers {
 			headers = append(headers, kafka.Header{
 				Key:   key,
 				Value: []byte(value),
 			})
 		}
 
-		key := fmt.Sprintf("%v", e.ForeignID)
+		msgData, err := wr.ProtoMarshal()
+		if err != nil {
+			return err
+		}
+
+		key := fmt.Sprintf("%v", wr.ForeignID)
 		msg := kafka.Message{
 			Key:     []byte(key),
 			Value:   msgData,
@@ -133,22 +134,22 @@ func (c *Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, err
 		// Append the message to the commit slice to ensure we send all messages that have been processed
 		commit = append(commit, m)
 
-		e, err := workflow.UnmarshalEvent(m.Value)
+		wr, err := workflow.UnmarshalRecord(m.Value)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		e.ID = m.Offset
-		e.CreatedAt = m.Time
-		for _, header := range m.Headers {
-			e.Headers[header.Key] = string(header.Value)
+		event := &workflow.Event{
+			ID:        m.Offset,
+			CreatedAt: m.Time,
+			Record:    wr,
 		}
 
-		if skip := c.options.EventFilter(e); skip {
+		if skip := c.options.EventFilter(event); skip {
 			continue
 		}
 
-		return e, func() error {
+		return event, func() error {
 				return c.reader.CommitMessages(ctx, commit...)
 			},
 			nil

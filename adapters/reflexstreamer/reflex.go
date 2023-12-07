@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/luno/jettison/errors"
@@ -46,24 +47,20 @@ type Producer struct {
 	eventsTable *rsql.EventsTable
 }
 
-func (p Producer) Send(ctx context.Context, e *workflow.Event) error {
+func (p Producer) Send(ctx context.Context, wr *workflow.WireRecord) error {
 	tx, err := p.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	b, err := e.ProtoMarshal()
+	b, err := wr.ProtoMarshal()
 	if err != nil {
 		return err
 	}
 
-	eventType, err := TranslateToEventType(p.topic)
-	if err != nil {
-		return err
-	}
-
-	notify, err := p.eventsTable.InsertWithMetadata(ctx, tx, e.ForeignID, eventType, b)
+	foreignID := makeForeignID(wr)
+	notify, err := p.eventsTable.InsertWithMetadata(ctx, tx, foreignID, EventType(wr.Status), b)
 	if err != nil {
 		return err
 	}
@@ -134,22 +131,33 @@ func (c Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, erro
 			defer closer.Close()
 		}
 
-		et, err := TranslateToEventType(c.topic)
+		eventWorkflowName, _ := splitForeignID(reflexEvent)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		if !reflex.IsType(et, reflexEvent.Type) {
+		topicWorkflowName, status, err := workflow.ParseTopic(c.topic)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if eventWorkflowName != topicWorkflowName {
 			continue
 		}
 
-		event, err := workflow.UnmarshalEvent(reflexEvent.MetaData)
+		if !reflex.IsType(EventType(status), reflexEvent.Type) {
+			continue
+		}
+
+		wr, err := workflow.UnmarshalRecord(reflexEvent.MetaData)
 		if err != nil {
 			return nil, nil, err
 		}
-
-		event.ID = reflexEvent.IDInt()
-		event.CreatedAt = reflexEvent.Timestamp
+		event := &workflow.Event{
+			ID:        reflexEvent.IDInt(),
+			CreatedAt: reflexEvent.Timestamp,
+			Record:    wr,
+		}
 
 		// Filter out unwanted events
 		if skip := c.options.EventFilter(event); skip {
@@ -162,8 +170,8 @@ func (c Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, erro
 			if err := c.cursor.SetCursor(ctx, c.name, eventID); err != nil {
 				return errors.Wrap(err, "failed to set cursor", j.MKV{
 					"consumer":  c.name,
-					"event_id":  event.ID,
-					"event_fid": event.ForeignID,
+					"event_id":  reflexEvent.ID,
+					"event_fid": reflexEvent.ForeignID,
 				})
 			}
 
@@ -183,6 +191,17 @@ func (c Consumer) Close() error {
 	}
 
 	return nil
+}
+
+const separator = "-"
+
+func makeForeignID(e *workflow.WireRecord) string {
+	return strings.Join([]string{e.WorkflowName, e.ForeignID}, separator)
+}
+
+func splitForeignID(e *reflex.Event) (workflowName, foreignID string) {
+	parts := strings.Split(e.ForeignID, separator)
+	return parts[0], parts[1]
 }
 
 var _ workflow.EventStreamer = (*constructor)(nil)

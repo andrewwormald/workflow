@@ -25,6 +25,7 @@ type WireRecord struct {
 	IsStart      bool
 	IsEnd        bool
 	Object       []byte
+	Headers      map[string]string
 	CreatedAt    time.Time
 }
 
@@ -47,6 +48,7 @@ func ToProto(r *WireRecord) *workflowpb.Record {
 		IsEnd:        r.IsEnd,
 		Object:       r.Object,
 		CreatedAt:    timestamppb.New(r.CreatedAt),
+		Headers:      r.Headers,
 	}
 }
 
@@ -66,5 +68,6 @@ func UnmarshalRecord(b []byte) (*WireRecord, error) {
 		IsEnd:        wpb.IsEnd,
 		Object:       wpb.Object,
 		CreatedAt:    wpb.CreatedAt.AsTime(),
+		Headers:      wpb.Headers,
 	}, nil
 }

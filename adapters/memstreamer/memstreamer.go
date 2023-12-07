@@ -2,13 +2,14 @@ package memstreamer
 
 import (
 	"context"
-	"github.com/andrewwormald/workflow"
 	"sync"
 	"time"
+
+	"github.com/andrewwormald/workflow"
 )
 
 func New() *StreamConstructor {
-	var log []*workflow.Event
+	var log []*workflow.WireRecord
 	return &StreamConstructor{
 		stream: &Stream{
 			mu:  &sync.Mutex{},
@@ -48,26 +49,25 @@ var _ workflow.EventStreamer = (*StreamConstructor)(nil)
 
 type Stream struct {
 	mu     *sync.Mutex
-	log    *[]*workflow.Event
+	log    *[]*workflow.WireRecord
 	offset int
 	topic  string
 	name   string
 }
 
-func (s *Stream) Send(ctx context.Context, e *workflow.Event) error {
+func (s *Stream) Send(ctx context.Context, wr *workflow.WireRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Storing in the header to filter on recv
-	e.Headers["topic"] = s.topic
+	wr.Headers["topic"] = s.topic
 
-	*s.log = append(*s.log, e)
+	*s.log = append(*s.log, wr)
 
 	return nil
 }
 
 func (s *Stream) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, error) {
-
 	for ctx.Err() == nil {
 		s.mu.Lock()
 		log := *s.log
@@ -84,7 +84,14 @@ func (s *Stream) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, error
 			s.offset += 1
 			continue
 		}
-		return log[s.offset], func() error {
+
+		wr := log[s.offset]
+		event := &workflow.Event{
+			ID:        int64(s.offset),
+			CreatedAt: wr.CreatedAt,
+			Record:    log[s.offset],
+		}
+		return event, func() error {
 			s.offset += 1
 			return nil
 		}, nil
@@ -102,5 +109,7 @@ func (s *Stream) Close() error {
 	return nil
 }
 
-var _ workflow.Producer = (*Stream)(nil)
-var _ workflow.Consumer = (*Stream)(nil)
+var (
+	_ workflow.Producer = (*Stream)(nil)
+	_ workflow.Consumer = (*Stream)(nil)
+)
