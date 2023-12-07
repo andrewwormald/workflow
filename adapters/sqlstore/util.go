@@ -34,6 +34,31 @@ func (s *SQLStore) create(ctx context.Context, tx *sql.Tx, workflowName, foreign
 	return resp.LastInsertId()
 }
 
+func (s *SQLStore) update(ctx context.Context, tx *sql.Tx, workflowName, foreignID, runID string, status int, object []byte, isStart, isEnd bool, id int64) error {
+	_, err := tx.ExecContext(ctx, "update "+s.recordTableName+" set "+
+		" workflow_name=?, foreign_id=?, run_id=?, status=?, object=?, is_start=?, is_end=? where id=?",
+		workflowName,
+		foreignID,
+		runID,
+		status,
+		object,
+		isStart,
+		isEnd,
+		id,
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to create entry", j.MKV{
+			"workflowName": workflowName,
+			"foreignID":    foreignID,
+			"runID":        runID,
+			"status":       status,
+			"object":       object,
+		})
+	}
+
+	return nil
+}
+
 func (s *SQLStore) lookupWhere(ctx context.Context, dbc *sql.DB, where string, args ...any) (*workflow.WireRecord, error) {
 	return recordScan(dbc.QueryRowContext(ctx, s.recordSelectPrefix+where, args...))
 }

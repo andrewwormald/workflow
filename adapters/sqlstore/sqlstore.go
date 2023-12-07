@@ -40,9 +40,32 @@ func (s *SQLStore) Store(ctx context.Context, r *workflow.WireRecord, eventEmitt
 	}
 	defer tx.Rollback()
 
-	id, err := s.create(ctx, tx, r.WorkflowName, r.ForeignID, r.RunID, r.Status, r.Object, r.IsStart, r.IsEnd)
-	if err != nil {
-		return err
+	var mustCreate bool
+	if r.ID != 0 {
+		_, err := recordScan(tx.QueryRowContext(ctx, s.recordSelectPrefix+"id=?", r.ID))
+		if errors.Is(err, workflow.ErrRecordNotFound) {
+			mustCreate = true
+		} else if err != nil {
+			return err
+		}
+	} else {
+		mustCreate = true
+	}
+
+	var id int64
+	if mustCreate {
+		id, err = s.create(ctx, tx, r.WorkflowName, r.ForeignID, r.RunID, r.Status, r.Object, r.IsStart, r.IsEnd)
+		if err != nil {
+			return err
+		}
+	} else {
+		err := s.update(ctx, tx, r.WorkflowName, r.ForeignID, r.RunID, r.Status, r.Object, r.IsStart, r.IsEnd, r.ID)
+		if err != nil {
+			return err
+		}
+
+		// For updates
+		id = r.ID
 	}
 
 	err = eventEmitter(id)

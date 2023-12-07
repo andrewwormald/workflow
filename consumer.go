@@ -186,6 +186,7 @@ func consume[Type any, Status StatusType](ctx context.Context, wr *WireRecord, c
 
 		isEnd := endPoints[destinationStatus]
 		wr := &WireRecord{
+			ID:           record.ID,
 			RunID:        record.RunID,
 			WorkflowName: record.WorkflowName,
 			ForeignID:    record.ForeignID,

@@ -72,6 +72,7 @@ func processCallback[Type any, Status StatusType](ctx context.Context, w *Workfl
 	}
 
 	wr := &WireRecord{
+		ID:           record.ID,
 		WorkflowName: record.WorkflowName,
 		ForeignID:    record.ForeignID,
 		RunID:        record.RunID,
