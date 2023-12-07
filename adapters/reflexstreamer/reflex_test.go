@@ -11,7 +11,7 @@ import (
 )
 
 func TestStreamer(t *testing.T) {
-	eventsTable := rsql.NewEventsTable("my_events_table", rsql.WithEventMetadataField("metadata"))
+	eventsTable := rsql.NewEventsTableInt("my_events_table", rsql.WithEventMetadataField("metadata"))
 	dbc := ConnectForTesting(t)
 	constructor := reflexstreamer.New(dbc, dbc, eventsTable, rpatterns.MemCursorStore())
 	adapter.TestStreamer(t, constructor)

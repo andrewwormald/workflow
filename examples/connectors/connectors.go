@@ -45,7 +45,8 @@ type WorkflowBDeps struct {
 	TimeoutStore  workflow.TimeoutStore
 	RoleScheduler workflow.RoleScheduler
 
-	WorkflowAStreamer workflow.EventStreamer
+	WorkflowAStreamer    workflow.EventStreamer
+	WorkflowARecordStore workflow.RecordStore
 }
 
 type TypeB struct {
@@ -66,12 +67,17 @@ func WorkflowB(d WorkflowBDeps) *workflow.Workflow[TypeB, examples.Status] {
 			Stream:       d.WorkflowAStreamer,
 		},
 		func(ctx context.Context, e *workflow.Event) (foreignID string, err error) {
-			return e.Record.ForeignID, nil
+			return e.Headers[workflow.HeaderWorkflowForeignID], nil
 		},
 		examples.StatusFollowedTheExample,
 		func(ctx context.Context, r *workflow.Record[TypeB, examples.Status], e *workflow.Event) (bool, error) {
+			recordA, err := d.WorkflowARecordStore.Lookup(ctx, e.RecordID)
+			if err != nil {
+				return false, err
+			}
+
 			var objectA TypeB
-			err := workflow.Unmarshal(e.Record.Object, &objectA)
+			err = workflow.Unmarshal(recordA.Object, &objectA)
 			if err != nil {
 				return false, err
 			}

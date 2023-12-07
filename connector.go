@@ -73,11 +73,11 @@ func connectorConsumer[Type any, Status StatusType](w *Workflow[Type, Status], c
 	defer stream.Close()
 
 	w.run(role, func(ctx context.Context) error {
-		return consumeExternalWorkflow[Type, Status](ctx, stream, w, cc.filter, cc.consumer, cc.to)
+		return consumeExternalWorkflow[Type, Status](ctx, stream, w, cc.workflowName, cc.status, cc.filter, cc.consumer, cc.to)
 	}, errBackOff)
 }
 
-func consumeExternalWorkflow[Type any, Status StatusType](ctx context.Context, stream Consumer, w *Workflow[Type, Status], filter ConnectorFilter, consumerFunc ConnectorConsumerFunc[Type, Status], to Status) error {
+func consumeExternalWorkflow[Type any, Status StatusType](ctx context.Context, stream Consumer, w *Workflow[Type, Status], externalWorkflowName string, status int, filter ConnectorFilter, consumerFunc ConnectorConsumerFunc[Type, Status], to Status) error {
 	for {
 		if ctx.Err() != nil {
 			return errors.Wrap(ErrWorkflowShutdown, "")
@@ -86,6 +86,24 @@ func consumeExternalWorkflow[Type any, Status StatusType](ctx context.Context, s
 		e, ack, err := stream.Recv(ctx)
 		if err != nil {
 			return err
+		}
+
+		if e.Headers[HeaderWorkflowName] != externalWorkflowName {
+			err = ack()
+			if err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if e.Type != status {
+			err = ack()
+			if err != nil {
+				return err
+			}
+
+			continue
 		}
 
 		foreignID, err := filter(ctx, e)

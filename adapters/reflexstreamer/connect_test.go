@@ -11,7 +11,7 @@ var tables = []string{
 	`
 	create table my_events_table (
 	  id bigint not null auto_increment,
-	  foreign_id varchar(255) not null,
+	  foreign_id bigint not null,
 	  timestamp datetime not null,
 	  type int not null default 0,
 	  metadata blob,

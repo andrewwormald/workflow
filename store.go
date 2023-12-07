@@ -10,6 +10,7 @@ type RecordStore interface {
 	// should implement transactions if it is supported especially if the Store is append-only as a new ID for the
 	// record will need to be passed to the event emitter.
 	Store(ctx context.Context, record *WireRecord, eventEmitter EventEmitter) error
+	Lookup(ctx context.Context, id int64) (*WireRecord, error)
 	Latest(ctx context.Context, workflowName, foreignID string) (*WireRecord, error)
 }
 

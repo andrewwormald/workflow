@@ -3,9 +3,9 @@ package reflexstreamer
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/luno/jettison/errors"
@@ -16,7 +16,7 @@ import (
 	"github.com/andrewwormald/workflow"
 )
 
-func New(writer, reader *sql.DB, table *rsql.EventsTable, cursorStore reflex.CursorStore) workflow.EventStreamer {
+func New(writer, reader *sql.DB, table *rsql.EventsTableInt, cursorStore reflex.CursorStore) workflow.EventStreamer {
 	return &constructor{
 		writer:      writer,
 		reader:      reader,
@@ -29,7 +29,7 @@ type constructor struct {
 	writer      *sql.DB
 	reader      *sql.DB
 	stream      reflex.StreamFunc
-	eventsTable *rsql.EventsTable
+	eventsTable *rsql.EventsTableInt
 	cursorStore reflex.CursorStore
 }
 
@@ -44,23 +44,22 @@ func (c constructor) NewProducer(topic string) workflow.Producer {
 type Producer struct {
 	topic       string
 	writer      *sql.DB
-	eventsTable *rsql.EventsTable
+	eventsTable *rsql.EventsTableInt
 }
 
-func (p Producer) Send(ctx context.Context, wr *workflow.WireRecord) error {
+func (p Producer) Send(ctx context.Context, recordID int64, statusType int, headers map[workflow.Header]string) error {
 	tx, err := p.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	b, err := wr.ProtoMarshal()
+	b, err := json.Marshal(headers)
 	if err != nil {
 		return err
 	}
 
-	foreignID := makeForeignID(wr)
-	notify, err := p.eventsTable.InsertWithMetadata(ctx, tx, foreignID, EventType(wr.Status), b)
+	notify, err := p.eventsTable.InsertWithMetadata(ctx, tx, recordID, EventType(statusType), b)
 	if err != nil {
 		return err
 	}
@@ -131,32 +130,18 @@ func (c Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, erro
 			defer closer.Close()
 		}
 
-		eventWorkflowName, _ := splitForeignID(reflexEvent)
+		headers := make(map[workflow.Header]string)
+		err = json.Unmarshal(reflexEvent.MetaData, &headers)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		topicWorkflowName, status, err := workflow.ParseTopic(c.topic)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if eventWorkflowName != topicWorkflowName {
-			continue
-		}
-
-		if !reflex.IsType(EventType(status), reflexEvent.Type) {
-			continue
-		}
-
-		wr, err := workflow.UnmarshalRecord(reflexEvent.MetaData)
-		if err != nil {
-			return nil, nil, err
-		}
 		event := &workflow.Event{
 			ID:        reflexEvent.IDInt(),
+			RecordID:  reflexEvent.ForeignIDInt(),
+			Type:      reflexEvent.Type.ReflexType(),
+			Headers:   headers,
 			CreatedAt: reflexEvent.Timestamp,
-			Record:    wr,
 		}
 
 		// Filter out unwanted events
@@ -191,17 +176,6 @@ func (c Consumer) Close() error {
 	}
 
 	return nil
-}
-
-const separator = "-"
-
-func makeForeignID(e *workflow.WireRecord) string {
-	return strings.Join([]string{e.WorkflowName, e.ForeignID}, separator)
-}
-
-func splitForeignID(e *reflex.Event) (workflowName, foreignID string) {
-	parts := strings.Split(e.ForeignID, separator)
-	return parts[0], parts[1]
 }
 
 var _ workflow.EventStreamer = (*constructor)(nil)

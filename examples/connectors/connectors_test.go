@@ -18,10 +18,11 @@ import (
 func TestConnectStreamParallelConsumer(t *testing.T) {
 	ctx := context.Background()
 	eventStreamerA := memstreamer.New()
+	recordStoreA := memrecordstore.New()
 
 	workflowA := connectors.WorkflowA(connectors.WorkflowADeps{
 		EventStreamer: eventStreamerA,
-		RecordStore:   memrecordstore.New(),
+		RecordStore:   recordStoreA,
 		TimeoutStore:  memtimeoutstore.New(),
 		RoleScheduler: memrolescheduler.New(),
 	})
@@ -30,11 +31,12 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 	t.Cleanup(workflowA.Stop)
 
 	workflowB := connectors.WorkflowB(connectors.WorkflowBDeps{
-		EventStreamer:     memstreamer.New(),
-		RecordStore:       memrecordstore.New(),
-		TimeoutStore:      memtimeoutstore.New(),
-		RoleScheduler:     memrolescheduler.New(),
-		WorkflowAStreamer: eventStreamerA,
+		EventStreamer:        memstreamer.New(),
+		RecordStore:          memrecordstore.New(),
+		TimeoutStore:         memtimeoutstore.New(),
+		RoleScheduler:        memrolescheduler.New(),
+		WorkflowAStreamer:    eventStreamerA,
+		WorkflowARecordStore: recordStoreA,
 	})
 
 	workflowB.Run(ctx)

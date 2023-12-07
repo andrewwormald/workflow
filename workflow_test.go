@@ -197,7 +197,6 @@ func TestTimeout(t *testing.T) {
 
 	end := time.Now()
 
-	fmt.Println(end.Sub(start))
 	require.True(t, end.Sub(start) < 1*time.Second)
 }
 
@@ -591,7 +590,9 @@ func TestInternalState(t *testing.T) {
 			Status:       int(StatusCompleted),
 			Stream:       memstreamer.New(),
 		},
-		func(ctx context.Context, e *workflow.Event) (string, error) { return e.Record.ForeignID, nil },
+		func(ctx context.Context, e *workflow.Event) (string, error) {
+			return e.Headers[workflow.HeaderWorkflowForeignID], nil
+		},
 		StatusMiddle,
 		func(ctx context.Context, r *workflow.Record[string, status], e *workflow.Event) (bool, error) {
 			return true, nil
@@ -654,9 +655,10 @@ func TestConnectStream(t *testing.T) {
 		return true, nil
 	}, StatusCompleted)
 
+	recordstoreA := memrecordstore.New()
 	workflowA := a.Build(
 		streamerA,
-		memrecordstore.New(),
+		recordstoreA,
 		memtimeoutstore.New(),
 		memrolescheduler.New(),
 	)
@@ -678,12 +680,15 @@ func TestConnectStream(t *testing.T) {
 			Stream:       streamerA,
 		},
 		func(ctx context.Context, e *workflow.Event) (string, error) {
-			return e.Record.ForeignID, nil
+			return e.Headers[workflow.HeaderWorkflowForeignID], nil
 		},
 		StatusMiddle,
 		func(ctx context.Context, r *workflow.Record[typeB, status], e *workflow.Event) (bool, error) {
+			recordA, err := recordstoreA.Lookup(ctx, e.RecordID)
+			jtest.RequireNil(t, err)
+
 			var objectA typeA
-			err := workflow.Unmarshal(e.Record.Object, &objectA)
+			err = workflow.Unmarshal(recordA.Object, &objectA)
 			jtest.RequireNil(t, err)
 
 			// Copy the value over from objectA that came from workflowA to our object in workflowB
@@ -734,9 +739,10 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 		return true, nil
 	}, StatusCompleted)
 
+	recordstoreA := memrecordstore.New()
 	workflowA := a.Build(
 		streamerA,
-		memrecordstore.New(),
+		recordstoreA,
 		memtimeoutstore.New(),
 		memrolescheduler.New(),
 	)
@@ -758,12 +764,15 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 			Stream:       streamerA,
 		},
 		func(ctx context.Context, e *workflow.Event) (string, error) {
-			return e.Record.ForeignID, nil
+			return e.Headers[workflow.HeaderWorkflowForeignID], nil
 		},
 		StatusMiddle,
 		func(ctx context.Context, r *workflow.Record[typeB, status], e *workflow.Event) (bool, error) {
+			recordA, err := recordstoreA.Lookup(ctx, e.RecordID)
+			jtest.RequireNil(t, err)
+
 			var objectA typeA
-			err := workflow.Unmarshal(e.Record.Object, &objectA)
+			err = workflow.Unmarshal(recordA.Object, &objectA)
 			jtest.RequireNil(t, err)
 
 			// Copy the value over from objectA that came from workflowA to our object in workflowB

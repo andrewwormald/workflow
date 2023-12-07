@@ -213,13 +213,16 @@ func update(ctx context.Context, streamer EventStreamer, store RecordStore, wr *
 		// Update ID in-case the store is an append only store and the ID changes with every update
 		wr.ID = id
 
-		if wr.Headers == nil {
-			wr.Headers = make(map[string]string)
-		}
-
 		topic := Topic(wr.WorkflowName, wr.Status)
+
+		headers := make(map[Header]string)
+		headers[HeaderWorkflowForeignID] = wr.ForeignID
+		headers[HeaderWorkflowName] = wr.WorkflowName
+		headers[HeaderTopic] = topic
+		headers[HeaderRunID] = wr.RunID
+
 		producer := streamer.NewProducer(topic)
-		err := producer.Send(ctx, wr)
+		err := producer.Send(ctx, wr.ID, wr.Status, headers)
 		if err != nil {
 			return err
 		}

@@ -53,6 +53,10 @@ func (s *SQLStore) Store(ctx context.Context, r *workflow.WireRecord, eventEmitt
 	return tx.Commit()
 }
 
+func (s *SQLStore) Lookup(ctx context.Context, id int64) (*workflow.WireRecord, error) {
+	return s.lookupWhere(ctx, s.reader, "id=?", id)
+}
+
 func (s *SQLStore) Latest(ctx context.Context, workflowName, foreignID string) (*workflow.WireRecord, error) {
 	ls, err := s.listWhere(ctx, s.reader, "workflow_name=? and foreign_id=? order by id desc limit 1", workflowName, foreignID)
 	if err != nil {

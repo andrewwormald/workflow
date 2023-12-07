@@ -135,7 +135,7 @@ func TestConnectWorkflowConstruction(t *testing.T) {
 	}, statusMiddle)
 
 	filter := func(ctx context.Context, e *Event) (string, error) {
-		return e.Record.ForeignID, nil
+		return e.Headers[HeaderWorkflowForeignID], nil
 	}
 
 	consumer := func(ctx context.Context, r *Record[string, testStatus], e *Event) (bool, error) {

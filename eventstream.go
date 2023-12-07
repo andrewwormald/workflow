@@ -13,7 +13,7 @@ type EventStreamer interface {
 }
 
 type Producer interface {
-	Send(ctx context.Context, wr *WireRecord) error
+	Send(ctx context.Context, recordID int64, statusType int, headers map[Header]string) error
 	Close() error
 }
 
@@ -57,7 +57,17 @@ func awaitWorkflowStatusByForeignID[Type any, Status StatusType](ctx context.Con
 		role,
 		WithConsumerPollFrequency(pollFrequency),
 		WithEventFilter(func(e *Event) bool {
-			return e.Record.ForeignID != foreignID
+			fid, ok := e.Headers[HeaderWorkflowForeignID]
+			if !ok {
+				return false
+			}
+
+			rID, ok := e.Headers[HeaderRunID]
+			if !ok {
+				return false
+			}
+
+			return fid != foreignID || rID != runID
 		}),
 	)
 	defer stream.Close()
@@ -72,10 +82,7 @@ func awaitWorkflowStatusByForeignID[Type any, Status StatusType](ctx context.Con
 			return nil, err
 		}
 
-		switch true {
-		// If the record doesn't match the status, foreignID, and runID then sleep and try again
-		case e.Record.Status != int(status), e.Record.ForeignID != foreignID, e.Record.RunID != runID:
-			// Increment the offset / cursor to consume new events
+		if e.Headers[HeaderWorkflowName] != w.Name {
 			err = ack()
 			if err != nil {
 				return nil, err
@@ -84,15 +91,36 @@ func awaitWorkflowStatusByForeignID[Type any, Status StatusType](ctx context.Con
 			continue
 		}
 
+		if e.Type != int(status) {
+			err = ack()
+			if err != nil {
+				return nil, err
+			}
+
+			continue
+		}
+
+		r, err := w.recordStore.Lookup(ctx, e.RecordID)
+		if errors.Is(err, ErrRecordNotFound) {
+			err = ack()
+			if err != nil {
+				return nil, err
+			}
+
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+
 		var t Type
-		err = Unmarshal(e.Record.Object, &t)
+		err = Unmarshal(r.Object, &t)
 		if err != nil {
 			return nil, err
 		}
 
 		return &Record[Type, Status]{
-			WireRecord: *e.Record,
-			Status:     Status(e.Record.Status),
+			WireRecord: *r,
+			Status:     Status(r.Status),
 			Object:     &t,
 		}, ack()
 	}

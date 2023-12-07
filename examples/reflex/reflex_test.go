@@ -19,7 +19,7 @@ import (
 func TestExampleWorkflow(t *testing.T) {
 	dbc := ConnectForTesting(t)
 
-	table := rsql.NewEventsTable("my_events_table", rsql.WithEventMetadataField("metadata"))
+	table := rsql.NewEventsTableInt("my_events_table", rsql.WithEventMetadataField("metadata"))
 	wf := reflex.ExampleWorkflow(dbc, table, rpatterns.MemCursorStore())
 	t.Cleanup(wf.Stop)
 
@@ -50,7 +50,7 @@ var tables = []string{
 	`
 	create table my_events_table (
 	  id bigint not null auto_increment,
-	  foreign_id varchar(255) not null,
+	  foreign_id bigint not null,
 	  timestamp datetime not null,
 	  type bigint not null default 0,
 	  metadata blob,

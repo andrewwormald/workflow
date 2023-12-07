@@ -11,28 +11,16 @@ import (
 	"github.com/andrewwormald/workflow"
 )
 
-func New(opts ...Option) *Store {
+func New() *Store {
 	s := &Store{
 		idIncrement:        1,
 		timeoutIdIncrement: 1,
 		clock:              clock.RealClock{},
 		keyIndex:           make(map[string][]*workflow.WireRecord),
-		workflowIndex:      make(map[string][]*workflow.WireRecord),
-	}
-
-	for _, opt := range opts {
-		opt(s)
+		store:              make(map[int64]*workflow.WireRecord),
 	}
 
 	return s
-}
-
-type Option func(s *Store)
-
-func WithClock(c clock.Clock) Option {
-	return func(s *Store) {
-		s.clock = c
-	}
 }
 
 var _ workflow.RecordStore = (*Store)(nil)
@@ -43,19 +31,33 @@ type Store struct {
 
 	clock clock.Clock
 
-	keyIndex      map[string][]*workflow.WireRecord
-	workflowIndex map[string][]*workflow.WireRecord
+	keyIndex map[string][]*workflow.WireRecord
+	store    map[int64]*workflow.WireRecord
 
 	tmu                sync.Mutex
 	timeoutIdIncrement int64
 	timeouts           []*workflow.Timeout
 }
 
+func (s *Store) Lookup(ctx context.Context, id int64) (*workflow.WireRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	r, ok := s.store[id]
+	if !ok {
+		return nil, errors.Wrap(workflow.ErrRecordNotFound, "")
+	}
+
+	return r, nil
+}
+
 func (s *Store) Store(ctx context.Context, record *workflow.WireRecord, emitter workflow.EventEmitter) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	record.ID = int64(len(s.workflowIndex[record.WorkflowName])) + 1
+	s.idIncrement++
+
+	record.ID = s.idIncrement
 
 	err := emitter(record.ID)
 	if err != nil {
@@ -64,7 +66,7 @@ func (s *Store) Store(ctx context.Context, record *workflow.WireRecord, emitter 
 
 	uk := uniqueKey(record.WorkflowName, record.ForeignID)
 	s.keyIndex[uk] = append(s.keyIndex[uk], record)
-	s.workflowIndex[record.WorkflowName] = append(s.workflowIndex[record.WorkflowName], record)
+	s.store[record.ID] = record
 
 	return nil
 }

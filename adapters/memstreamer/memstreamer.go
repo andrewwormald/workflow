@@ -9,7 +9,7 @@ import (
 )
 
 func New() *StreamConstructor {
-	var log []*workflow.WireRecord
+	var log []*workflow.Event
 	return &StreamConstructor{
 		stream: &Stream{
 			mu:  &sync.Mutex{},
@@ -49,20 +49,24 @@ var _ workflow.EventStreamer = (*StreamConstructor)(nil)
 
 type Stream struct {
 	mu     *sync.Mutex
-	log    *[]*workflow.WireRecord
+	log    *[]*workflow.Event
 	offset int
 	topic  string
 	name   string
 }
 
-func (s *Stream) Send(ctx context.Context, wr *workflow.WireRecord) error {
+func (s *Stream) Send(ctx context.Context, recordID int64, statusType int, headers map[workflow.Header]string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Storing in the header to filter on recv
-	wr.Headers["topic"] = s.topic
-
-	*s.log = append(*s.log, wr)
+	length := len(*s.log)
+	*s.log = append(*s.log, &workflow.Event{
+		ID:        int64(length) + 1,
+		RecordID:  recordID,
+		Type:      statusType,
+		Headers:   headers,
+		CreatedAt: time.Now(),
+	})
 
 	return nil
 }
@@ -80,18 +84,12 @@ func (s *Stream) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, error
 
 		e := log[s.offset]
 
-		if s.topic != e.Headers["topic"] {
+		if s.topic != e.Headers[workflow.HeaderTopic] {
 			s.offset += 1
 			continue
 		}
 
-		wr := log[s.offset]
-		event := &workflow.Event{
-			ID:        int64(s.offset),
-			CreatedAt: wr.CreatedAt,
-			Record:    log[s.offset],
-		}
-		return event, func() error {
+		return e, func() error {
 			s.offset += 1
 			return nil
 		}, nil
