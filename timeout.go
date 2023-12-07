@@ -70,6 +70,7 @@ func pollTimeouts[Type any, Status StatusType](ctx context.Context, w *Workflow[
 					}
 
 					wr := &WireRecord{
+						ID:           record.ID,
 						WorkflowName: record.WorkflowName,
 						ForeignID:    record.ForeignID,
 						RunID:        record.RunID,

@@ -155,6 +155,7 @@ func consumeExternalWorkflow[Type any, Status StatusType](ctx context.Context, s
 
 			isEnd := w.endPoints[to]
 			wr := &WireRecord{
+				ID:           record.ID,
 				RunID:        record.RunID,
 				WorkflowName: record.WorkflowName,
 				ForeignID:    record.ForeignID,
