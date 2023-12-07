@@ -15,7 +15,7 @@ import (
 	"github.com/andrewwormald/workflow/examples/gettingstarted"
 )
 
-func ExampleWorkflow(db *sql.DB, table *rsql.EventsTable, cstore reflex.CursorStore) *workflow.Workflow[gettingstarted.GettingStarted, examples.Status] {
+func ExampleWorkflow(db *sql.DB, table *rsql.EventsTableInt, cstore reflex.CursorStore) *workflow.Workflow[gettingstarted.GettingStarted, examples.Status] {
 	return gettingstarted.WorkflowWithEnum(gettingstarted.Deps{
 		EventStreamer: reflexstreamer.New(db, db, table, cstore),
 		RecordStore:   memrecordstore.New(),

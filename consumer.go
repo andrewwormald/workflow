@@ -83,33 +83,48 @@ func runStepConsumerForever[Type any, Status StatusType](ctx context.Context, w 
 			return err
 		}
 
-		wr, err := UnmarshalRecord(e.Body)
-		if err != nil {
-			return err
-		}
-
-		latest, err := w.recordStore.Latest(ctx, wr.WorkflowName, wr.ForeignID)
-		if err != nil {
-			return err
-		}
-
-		if latest.Status != wr.Status {
+		if e.Headers[HeaderWorkflowName] != w.Name {
 			err = ack()
 			if err != nil {
 				return err
 			}
+
 			continue
 		}
 
-		if latest.RunID != wr.RunID {
+		if e.Type != int(status) {
 			err = ack()
 			if err != nil {
 				return err
 			}
+
 			continue
 		}
 
-		err = consume(ctx, wr, p.Consumer, ack, p.DestinationStatus, w.endPoints, w.eventStreamerFn, w.recordStore)
+		record, err := w.recordStore.Lookup(ctx, e.RecordID)
+		if errors.Is(err, ErrRecordNotFound) {
+			err = ack()
+			if err != nil {
+				return err
+			}
+
+			continue
+		} else if err != nil {
+			return err
+		}
+
+		// Check to see if record is in expected state. If the status isn't in the expected state then skip for
+		// idempotency.
+		if record.Status != e.Type {
+			err = ack()
+			if err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		err = consume(ctx, record, p.Consumer, ack, p.DestinationStatus, w.endPoints, w.eventStreamerFn, w.recordStore)
 		if err != nil {
 			return err
 		}

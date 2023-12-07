@@ -197,7 +197,6 @@ func TestTimeout(t *testing.T) {
 
 	end := time.Now()
 
-	fmt.Println(end.Sub(start))
 	require.True(t, end.Sub(start) < 1*time.Second)
 }
 
@@ -586,10 +585,15 @@ func TestInternalState(t *testing.T) {
 	}, StatusCompleted)
 
 	b.ConnectWorkflow(
-		"other workflow",
-		int(StatusCompleted),
-		memstreamer.New(),
-		func(ctx context.Context, e *workflow.Event) (string, error) { return e.ForeignID, nil },
+		workflow.ConnectionDetails{
+			WorkflowName: "other workflow",
+			Status:       int(StatusCompleted),
+			Stream:       memstreamer.New(),
+		},
+		func(ctx context.Context, e *workflow.Event) (string, error) {
+			return e.Headers[workflow.HeaderWorkflowForeignID], nil
+		},
+		StatusMiddle,
 		func(ctx context.Context, r *workflow.Record[string, status], e *workflow.Event) (bool, error) {
 			return true, nil
 		},
@@ -614,26 +618,26 @@ func TestInternalState(t *testing.T) {
 	time.Sleep(time.Second)
 
 	require.Equal(t, map[string]workflow.State{
-		"example-10-to-11-consumer-1-of-3":                         workflow.StateRunning,
-		"example-10-to-11-consumer-2-of-3":                         workflow.StateRunning,
-		"example-10-to-11-consumer-3-of-3":                         workflow.StateRunning,
-		"example-9-to-10-consumer-1-of-1":                          workflow.StateRunning,
-		"example-1-timeout-auto-inserter-consumer":                 workflow.StateRunning,
-		"example-1-timeout-consumer":                               workflow.StateRunning,
-		"other_workflow-8-to-example-11-connector-consumer-1-of-2": workflow.StateRunning,
-		"other_workflow-8-to-example-11-connector-consumer-2-of-2": workflow.StateRunning,
+		"example-10-to-11-consumer-1-of-3":                                       workflow.StateRunning,
+		"example-10-to-11-consumer-2-of-3":                                       workflow.StateRunning,
+		"example-10-to-11-consumer-3-of-3":                                       workflow.StateRunning,
+		"example-9-to-10-consumer-1-of-1":                                        workflow.StateRunning,
+		"example-1-timeout-auto-inserter-consumer":                               workflow.StateRunning,
+		"example-1-timeout-consumer":                                             workflow.StateRunning,
+		"other_workflow-8-connection-example-10-to-11-connector-consumer-1-of-2": workflow.StateRunning,
+		"other_workflow-8-connection-example-10-to-11-connector-consumer-2-of-2": workflow.StateRunning,
 	}, wf.States())
 
 	wf.Stop()
 	require.Equal(t, map[string]workflow.State{
-		"example-10-to-11-consumer-1-of-3":                         workflow.StateShutdown,
-		"example-10-to-11-consumer-2-of-3":                         workflow.StateShutdown,
-		"example-10-to-11-consumer-3-of-3":                         workflow.StateShutdown,
-		"example-9-to-10-consumer-1-of-1":                          workflow.StateShutdown,
-		"example-1-timeout-auto-inserter-consumer":                 workflow.StateShutdown,
-		"example-1-timeout-consumer":                               workflow.StateShutdown,
-		"other_workflow-8-to-example-11-connector-consumer-1-of-2": workflow.StateShutdown,
-		"other_workflow-8-to-example-11-connector-consumer-2-of-2": workflow.StateShutdown,
+		"example-10-to-11-consumer-1-of-3":                                       workflow.StateShutdown,
+		"example-10-to-11-consumer-2-of-3":                                       workflow.StateShutdown,
+		"example-10-to-11-consumer-3-of-3":                                       workflow.StateShutdown,
+		"example-9-to-10-consumer-1-of-1":                                        workflow.StateShutdown,
+		"example-1-timeout-auto-inserter-consumer":                               workflow.StateShutdown,
+		"example-1-timeout-consumer":                                             workflow.StateShutdown,
+		"other_workflow-8-connection-example-10-to-11-connector-consumer-1-of-2": workflow.StateShutdown,
+		"other_workflow-8-connection-example-10-to-11-connector-consumer-2-of-2": workflow.StateShutdown,
 	}, wf.States())
 }
 
@@ -651,9 +655,10 @@ func TestConnectStream(t *testing.T) {
 		return true, nil
 	}, StatusCompleted)
 
+	recordstoreA := memrecordstore.New()
 	workflowA := a.Build(
 		streamerA,
-		memrecordstore.New(),
+		recordstoreA,
 		memtimeoutstore.New(),
 		memrolescheduler.New(),
 	)
@@ -669,18 +674,21 @@ func TestConnectStream(t *testing.T) {
 		return true, nil
 	}, StatusMiddle)
 	b.ConnectWorkflow(
-		workflowA.Name,
-		int(StatusCompleted),
-		streamerA,
-		func(ctx context.Context, e *workflow.Event) (string, error) {
-			return e.ForeignID, nil
+		workflow.ConnectionDetails{
+			WorkflowName: workflowA.Name,
+			Status:       int(StatusCompleted),
+			Stream:       streamerA,
 		},
+		func(ctx context.Context, e *workflow.Event) (string, error) {
+			return e.Headers[workflow.HeaderWorkflowForeignID], nil
+		},
+		StatusMiddle,
 		func(ctx context.Context, r *workflow.Record[typeB, status], e *workflow.Event) (bool, error) {
-			wr, err := workflow.UnmarshalRecord(e.Body)
+			recordA, err := recordstoreA.Lookup(ctx, e.RecordID)
 			jtest.RequireNil(t, err)
 
 			var objectA typeA
-			err = workflow.Unmarshal(wr.Object, &objectA)
+			err = workflow.Unmarshal(recordA.Object, &objectA)
 			jtest.RequireNil(t, err)
 
 			// Copy the value over from objectA that came from workflowA to our object in workflowB
@@ -731,9 +739,10 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 		return true, nil
 	}, StatusCompleted)
 
+	recordstoreA := memrecordstore.New()
 	workflowA := a.Build(
 		streamerA,
-		memrecordstore.New(),
+		recordstoreA,
 		memtimeoutstore.New(),
 		memrolescheduler.New(),
 	)
@@ -749,18 +758,21 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 		return true, nil
 	}, StatusMiddle)
 	b.ConnectWorkflow(
-		workflowA.Name,
-		int(StatusCompleted),
-		streamerA,
-		func(ctx context.Context, e *workflow.Event) (string, error) {
-			return e.ForeignID, nil
+		workflow.ConnectionDetails{
+			WorkflowName: workflowA.Name,
+			Status:       int(StatusCompleted),
+			Stream:       streamerA,
 		},
+		func(ctx context.Context, e *workflow.Event) (string, error) {
+			return e.Headers[workflow.HeaderWorkflowForeignID], nil
+		},
+		StatusMiddle,
 		func(ctx context.Context, r *workflow.Record[typeB, status], e *workflow.Event) (bool, error) {
-			wr, err := workflow.UnmarshalRecord(e.Body)
+			recordA, err := recordstoreA.Lookup(ctx, e.RecordID)
 			jtest.RequireNil(t, err)
 
 			var objectA typeA
-			err = workflow.Unmarshal(wr.Object, &objectA)
+			err = workflow.Unmarshal(recordA.Object, &objectA)
 			jtest.RequireNil(t, err)
 
 			// Copy the value over from objectA that came from workflowA to our object in workflowB

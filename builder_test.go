@@ -135,17 +135,20 @@ func TestConnectWorkflowConstruction(t *testing.T) {
 	}, statusMiddle)
 
 	filter := func(ctx context.Context, e *Event) (string, error) {
-		return e.ForeignID, nil
+		return e.Headers[HeaderWorkflowForeignID], nil
 	}
 
 	consumer := func(ctx context.Context, r *Record[string, testStatus], e *Event) (bool, error) {
 		return true, nil
 	}
 	b.ConnectWorkflow(
-		"workflowA",
-		9,
-		externalStream,
+		ConnectionDetails{
+			WorkflowName: "workflowA",
+			Status:       9,
+			Stream:       externalStream,
+		},
 		filter,
+		statusMiddle,
 		consumer,
 		statusEnd,
 		WithParallelCount(3),

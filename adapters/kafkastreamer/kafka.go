@@ -3,11 +3,13 @@ package kafkastreamer
 import (
 	"context"
 	"fmt"
-	"github.com/andrewwormald/workflow"
-	"github.com/luno/jettison/errors"
+	"strconv"
 	"time"
 
+	"github.com/luno/jettison/errors"
 	"github.com/segmentio/kafka-go"
+
+	"github.com/andrewwormald/workflow"
 )
 
 func New(brokers []string) *StreamConstructor {
@@ -43,32 +45,27 @@ type Producer struct {
 
 var _ workflow.Producer = (*Producer)(nil)
 
-func (p *Producer) Send(ctx context.Context, e *workflow.Event) error {
+func (p *Producer) Send(ctx context.Context, recordID int64, statusType int, headers map[workflow.Header]string) error {
 	for ctx.Err() == nil {
 		ctx, cancel := context.WithTimeout(ctx, p.WriterTimeout)
 		defer cancel()
 
-		msgData, err := e.ProtoMarshal()
-		if err != nil {
-			return err
-		}
-
-		var headers []kafka.Header
-		for key, value := range e.Headers {
-			headers = append(headers, kafka.Header{
-				Key:   key,
+		var kHeaders []kafka.Header
+		for key, value := range headers {
+			kHeaders = append(kHeaders, kafka.Header{
+				Key:   string(key),
 				Value: []byte(value),
 			})
 		}
 
-		key := fmt.Sprintf("%v", e.ForeignID)
+		key := fmt.Sprintf("%v", recordID)
 		msg := kafka.Message{
 			Key:     []byte(key),
-			Value:   msgData,
-			Headers: headers,
+			Value:   []byte(strconv.FormatInt(int64(statusType), 10)),
+			Headers: kHeaders,
 		}
 
-		err = p.Writer.WriteMessages(ctx, msg)
+		err := p.Writer.WriteMessages(ctx, msg)
 		if errors.Is(err, kafka.LeaderNotAvailable) || errors.Is(err, context.DeadlineExceeded) {
 			time.Sleep(time.Millisecond * 250)
 			continue
@@ -133,22 +130,35 @@ func (c *Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, err
 		// Append the message to the commit slice to ensure we send all messages that have been processed
 		commit = append(commit, m)
 
-		e, err := workflow.UnmarshalEvent(m.Value)
+		recordID, err := strconv.ParseInt(string(m.Key), 10, 64)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		e.ID = m.Offset
-		e.CreatedAt = m.Time
-		for _, header := range m.Headers {
-			e.Headers[header.Key] = string(header.Value)
+		statusType, err := strconv.ParseInt(string(m.Value), 10, 64)
+		if err != nil {
+			return nil, nil, err
 		}
 
-		if skip := c.options.EventFilter(e); skip {
+		headers := make(map[workflow.Header]string)
+		for _, header := range m.Headers {
+			headers[workflow.Header(header.Key)] = string(header.Value)
+		}
+
+		event := &workflow.Event{
+			ID:        m.Offset,
+			RecordID:  recordID,
+			Type:      int(statusType),
+			Headers:   headers,
+			CreatedAt: m.Time,
+		}
+
+		if skip := c.options.EventFilter(event); skip {
 			continue
 		}
 
-		return e, func() error {
+		return event,
+			func() error {
 				return c.reader.CommitMessages(ctx, commit...)
 			},
 			nil

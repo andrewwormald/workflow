@@ -3,6 +3,7 @@ package reflexstreamer
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"strconv"
 	"time"
@@ -15,7 +16,7 @@ import (
 	"github.com/andrewwormald/workflow"
 )
 
-func New(writer, reader *sql.DB, table *rsql.EventsTable, cursorStore reflex.CursorStore) workflow.EventStreamer {
+func New(writer, reader *sql.DB, table *rsql.EventsTableInt, cursorStore reflex.CursorStore) workflow.EventStreamer {
 	return &constructor{
 		writer:      writer,
 		reader:      reader,
@@ -28,7 +29,7 @@ type constructor struct {
 	writer      *sql.DB
 	reader      *sql.DB
 	stream      reflex.StreamFunc
-	eventsTable *rsql.EventsTable
+	eventsTable *rsql.EventsTableInt
 	cursorStore reflex.CursorStore
 }
 
@@ -43,27 +44,22 @@ func (c constructor) NewProducer(topic string) workflow.Producer {
 type Producer struct {
 	topic       string
 	writer      *sql.DB
-	eventsTable *rsql.EventsTable
+	eventsTable *rsql.EventsTableInt
 }
 
-func (p Producer) Send(ctx context.Context, e *workflow.Event) error {
+func (p Producer) Send(ctx context.Context, recordID int64, statusType int, headers map[workflow.Header]string) error {
 	tx, err := p.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	b, err := e.ProtoMarshal()
+	b, err := json.Marshal(headers)
 	if err != nil {
 		return err
 	}
 
-	eventType, err := TranslateToEventType(p.topic)
-	if err != nil {
-		return err
-	}
-
-	notify, err := p.eventsTable.InsertWithMetadata(ctx, tx, e.ForeignID, eventType, b)
+	notify, err := p.eventsTable.InsertWithMetadata(ctx, tx, recordID, EventType(statusType), b)
 	if err != nil {
 		return err
 	}
@@ -134,22 +130,19 @@ func (c Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, erro
 			defer closer.Close()
 		}
 
-		et, err := TranslateToEventType(c.topic)
+		headers := make(map[workflow.Header]string)
+		err = json.Unmarshal(reflexEvent.MetaData, &headers)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		if !reflex.IsType(et, reflexEvent.Type) {
-			continue
+		event := &workflow.Event{
+			ID:        reflexEvent.IDInt(),
+			RecordID:  reflexEvent.ForeignIDInt(),
+			Type:      reflexEvent.Type.ReflexType(),
+			Headers:   headers,
+			CreatedAt: reflexEvent.Timestamp,
 		}
-
-		event, err := workflow.UnmarshalEvent(reflexEvent.MetaData)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		event.ID = reflexEvent.IDInt()
-		event.CreatedAt = reflexEvent.Timestamp
 
 		// Filter out unwanted events
 		if skip := c.options.EventFilter(event); skip {
@@ -162,8 +155,8 @@ func (c Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, erro
 			if err := c.cursor.SetCursor(ctx, c.name, eventID); err != nil {
 				return errors.Wrap(err, "failed to set cursor", j.MKV{
 					"consumer":  c.name,
-					"event_id":  event.ID,
-					"event_fid": event.ForeignID,
+					"event_id":  reflexEvent.ID,
+					"event_fid": reflexEvent.ForeignID,
 				})
 			}
 

@@ -16,12 +16,19 @@ type ConnectorFilter func(ctx context.Context, e *Event) (foreignID string, err 
 
 type ConnectorConsumerFunc[Type any, Status StatusType] func(ctx context.Context, r *Record[Type, Status], e *Event) (bool, error)
 
+type ConnectionDetails struct {
+	WorkflowName string
+	Status       int
+	Stream       EventStreamer
+}
+
 type connectorConfig[Type any, Status StatusType] struct {
 	workflowName     string
 	status           int
 	stream           EventStreamer
 	filter           ConnectorFilter
 	consumer         ConnectorConsumerFunc[Type, Status]
+	from             Status
 	to               Status
 	pollingFrequency time.Duration
 	errBackOff       time.Duration
@@ -32,8 +39,10 @@ func connectorConsumer[Type any, Status StatusType](w *Workflow[Type, Status], c
 	role := makeRole(
 		cc.workflowName,
 		fmt.Sprintf("%v", cc.status),
-		"to",
+		"connection",
 		w.Name,
+		fmt.Sprintf("%v", int(cc.from)),
+		"to",
 		fmt.Sprintf("%v", int(cc.to)),
 		"connector",
 		"consumer",
@@ -64,11 +73,11 @@ func connectorConsumer[Type any, Status StatusType](w *Workflow[Type, Status], c
 	defer stream.Close()
 
 	w.run(role, func(ctx context.Context) error {
-		return consumeExternalWorkflow[Type, Status](ctx, stream, w, cc.filter, cc.consumer, cc.to)
+		return consumeExternalWorkflow[Type, Status](ctx, stream, w, cc.workflowName, cc.status, cc.filter, cc.consumer, cc.to)
 	}, errBackOff)
 }
 
-func consumeExternalWorkflow[Type any, Status StatusType](ctx context.Context, stream Consumer, w *Workflow[Type, Status], filter ConnectorFilter, consumerFunc ConnectorConsumerFunc[Type, Status], to Status) error {
+func consumeExternalWorkflow[Type any, Status StatusType](ctx context.Context, stream Consumer, w *Workflow[Type, Status], externalWorkflowName string, status int, filter ConnectorFilter, consumerFunc ConnectorConsumerFunc[Type, Status], to Status) error {
 	for {
 		if ctx.Err() != nil {
 			return errors.Wrap(ErrWorkflowShutdown, "")
@@ -77,6 +86,24 @@ func consumeExternalWorkflow[Type any, Status StatusType](ctx context.Context, s
 		e, ack, err := stream.Recv(ctx)
 		if err != nil {
 			return err
+		}
+
+		if e.Headers[HeaderWorkflowName] != externalWorkflowName {
+			err = ack()
+			if err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if e.Type != status {
+			err = ack()
+			if err != nil {
+				return err
+			}
+
+			continue
 		}
 
 		foreignID, err := filter(ctx, e)
