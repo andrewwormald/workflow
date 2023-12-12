@@ -40,7 +40,7 @@ func TestTimeoutWorkflow(t *testing.T) {
 
 	clock.Step(time.Hour)
 
-	workflow.Require(t, wf, foreignID, runID, examples.StatusFollowedTheExample, timeouts.Example{
+	workflow.Require(t, wf, foreignID, examples.StatusFollowedTheExample, timeouts.Example{
 		Now: clock.Now(),
 	})
 }

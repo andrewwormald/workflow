@@ -147,7 +147,7 @@ func (c *Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, err
 
 		event := &workflow.Event{
 			ID:        m.Offset,
-			RecordID:  recordID,
+			ForeignID: recordID,
 			Type:      int(statusType),
 			Headers:   headers,
 			CreatedAt: m.Time,

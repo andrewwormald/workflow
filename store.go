@@ -14,6 +14,14 @@ type RecordStore interface {
 	Latest(ctx context.Context, workflowName, foreignID string) (*WireRecord, error)
 }
 
+type TestingRecordStore interface {
+	RecordStore
+
+	Snapshots(workflowName, foreignID, runID string) []*WireRecord
+	SetSnapshotOffset(workflowName, foreignID, runID string, offset int)
+	SnapshotOffset(workflowName, foreignID, runID string) int
+}
+
 // EventEmitter is a function that gets called before committing the change to the store. The store needs to support
 // transactions if it is implemented as an append only datastore to allow rolling back if the event fails to emit.
 type EventEmitter func(id int64) error

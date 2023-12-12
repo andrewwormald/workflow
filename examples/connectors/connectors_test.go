@@ -56,7 +56,7 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 	// Wait until workflowB reaches "Finished waiting" before finishing the test. Note that the value is "Hello World"
 	// from workflow A which is because we copy that value from workflow A to workflow B in the example implementation:
 	// examples/connectors/connectors.go:80
-	workflow.Require(t, workflowB, foreignID, runID, examples.StatusCreatedAFunExample, connectors.TypeB{
+	workflow.Require(t, workflowB, foreignID, examples.StatusCreatedAFunExample, connectors.TypeB{
 		Value: "Hello World",
 	})
 }

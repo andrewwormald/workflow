@@ -126,7 +126,7 @@ func TestWithTimeoutPollingFrequency(t *testing.T) {
 	require.Equal(t, time.Minute, wf.timeouts[statusStart].PollingFrequency)
 }
 
-func TestConnectWorkflowConstruction(t *testing.T) {
+func TestWorkflowConnectorConstruction(t *testing.T) {
 	externalStream := (EventStreamer)(nil)
 
 	b := NewBuilder[string, testStatus]("workflow B")
@@ -141,8 +141,8 @@ func TestConnectWorkflowConstruction(t *testing.T) {
 	consumer := func(ctx context.Context, r *Record[string, testStatus], e *Event) (bool, error) {
 		return true, nil
 	}
-	b.ConnectWorkflow(
-		ConnectionDetails{
+	b.AddWorkflowConnector(
+		WorkflowConnectionDetails{
 			WorkflowName: "workflowA",
 			Status:       9,
 			Stream:       externalStream,
@@ -157,7 +157,7 @@ func TestConnectWorkflowConstruction(t *testing.T) {
 	)
 	wf := b.Build(nil, nil, nil, nil)
 
-	for _, config := range wf.connectorConfigs {
+	for _, config := range wf.workflowConnectorConfigs {
 		require.Equal(t, "workflowA", config.workflowName)
 		require.Equal(t, 9, config.status)
 		require.Equal(t, externalStream, config.stream)

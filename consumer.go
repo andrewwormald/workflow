@@ -101,7 +101,7 @@ func runStepConsumerForever[Type any, Status StatusType](ctx context.Context, w 
 			continue
 		}
 
-		record, err := w.recordStore.Lookup(ctx, e.RecordID)
+		record, err := w.recordStore.Lookup(ctx, e.ForeignID)
 		if errors.Is(err, ErrRecordNotFound) {
 			err = ack()
 			if err != nil {

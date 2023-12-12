@@ -184,9 +184,6 @@ func TestTimeout(t *testing.T) {
 	runID, err := wf.Trigger(ctx, "example", StatusInitiated)
 	jtest.RequireNil(t, err)
 
-	_, err = wf.Await(ctx, "example", runID, StatusProfileCreated)
-	jtest.RequireNil(t, err)
-
 	workflow.AwaitTimeoutInsert(t, wf, "example", runID, StatusProfileCreated)
 
 	// Advance time forward by one hour to trigger the timeout
@@ -506,19 +503,19 @@ func TestWorkflow_TestingRequire(t *testing.T) {
 	wf.Run(ctx)
 
 	foreignID := "andrew"
-	runID, err := wf.Trigger(ctx, foreignID, StatusStart)
+	_, err := wf.Trigger(ctx, foreignID, StatusStart)
 	jtest.RequireNil(t, err)
 
 	expected := MyType{
 		Email: "andrew@workflow.com",
 	}
-	workflow.Require(t, wf, foreignID, runID, StatusMiddle, expected)
+	workflow.Require(t, wf, foreignID, StatusMiddle, expected)
 
 	expected = MyType{
 		Email:     "andrew@workflow.com",
 		Cellphone: "+44 349 8594",
 	}
-	workflow.Require(t, wf, foreignID, runID, StatusEnd, expected)
+	workflow.Require(t, wf, foreignID, StatusEnd, expected)
 }
 
 func TestTimeTimerFunc(t *testing.T) {
@@ -554,6 +551,7 @@ func TestTimeTimerFunc(t *testing.T) {
 	t.Cleanup(func() {
 		cancel()
 	})
+
 	wf.Run(ctx)
 
 	runID, err := wf.Trigger(ctx, "Andrew Wormald", StatusStart)
@@ -567,7 +565,7 @@ func TestTimeTimerFunc(t *testing.T) {
 		Yin:  true,
 		Yang: true,
 	}
-	workflow.Require(t, wf, "Andrew Wormald", runID, StatusEnd, expected)
+	workflow.Require(t, wf, "Andrew Wormald", StatusEnd, expected)
 }
 
 func TestInternalState(t *testing.T) {
@@ -584,8 +582,8 @@ func TestInternalState(t *testing.T) {
 		return true, nil
 	}, StatusCompleted)
 
-	b.ConnectWorkflow(
-		workflow.ConnectionDetails{
+	b.AddWorkflowConnector(
+		workflow.WorkflowConnectionDetails{
 			WorkflowName: "other workflow",
 			Status:       int(StatusCompleted),
 			Stream:       memstreamer.New(),
@@ -641,7 +639,7 @@ func TestInternalState(t *testing.T) {
 	}, wf.States())
 }
 
-func TestConnectStream(t *testing.T) {
+func TestWorkflowConnector(t *testing.T) {
 	ctx := context.Background()
 	streamerA := memstreamer.New()
 
@@ -673,8 +671,8 @@ func TestConnectStream(t *testing.T) {
 	b.AddStep(StatusStart, func(ctx context.Context, r *workflow.Record[typeB, status]) (bool, error) {
 		return true, nil
 	}, StatusMiddle)
-	b.ConnectWorkflow(
-		workflow.ConnectionDetails{
+	b.AddWorkflowConnector(
+		workflow.WorkflowConnectionDetails{
 			WorkflowName: workflowA.Name,
 			Status:       int(StatusCompleted),
 			Stream:       streamerA,
@@ -684,7 +682,7 @@ func TestConnectStream(t *testing.T) {
 		},
 		StatusMiddle,
 		func(ctx context.Context, r *workflow.Record[typeB, status], e *workflow.Event) (bool, error) {
-			recordA, err := recordstoreA.Lookup(ctx, e.RecordID)
+			recordA, err := recordstoreA.Lookup(ctx, e.ForeignID)
 			jtest.RequireNil(t, err)
 
 			var objectA typeA
@@ -711,7 +709,7 @@ func TestConnectStream(t *testing.T) {
 	foreignID := "andrewwormald"
 
 	// Start workflowB from "Start"
-	runID, err := workflowB.Trigger(ctx, foreignID, StatusStart)
+	_, err := workflowB.Trigger(ctx, foreignID, StatusStart)
 	jtest.RequireNil(t, err)
 
 	// Trigger workflowA
@@ -720,7 +718,7 @@ func TestConnectStream(t *testing.T) {
 
 	// Wait until workflowB reaches StatusEnd before finishing the test
 	// After reaching StatusEnd we know we merged an event from workflowA into workflowB in order for workflowB to complete.
-	workflow.Require(t, workflowB, foreignID, runID, StatusEnd, typeB{
+	workflow.Require(t, workflowB, foreignID, StatusEnd, typeB{
 		Val: "workflow A set this value",
 	})
 }
@@ -757,8 +755,8 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 	b.AddStep(StatusStart, func(ctx context.Context, r *workflow.Record[typeB, status]) (bool, error) {
 		return true, nil
 	}, StatusMiddle)
-	b.ConnectWorkflow(
-		workflow.ConnectionDetails{
+	b.AddWorkflowConnector(
+		workflow.WorkflowConnectionDetails{
 			WorkflowName: workflowA.Name,
 			Status:       int(StatusCompleted),
 			Stream:       streamerA,
@@ -768,7 +766,7 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 		},
 		StatusMiddle,
 		func(ctx context.Context, r *workflow.Record[typeB, status], e *workflow.Event) (bool, error) {
-			recordA, err := recordstoreA.Lookup(ctx, e.RecordID)
+			recordA, err := recordstoreA.Lookup(ctx, e.ForeignID)
 			jtest.RequireNil(t, err)
 
 			var objectA typeA
@@ -809,7 +807,62 @@ func TestConnectStreamParallelConsumer(t *testing.T) {
 
 	// Wait until workflowB reaches "End" before finishing the test
 	// After reaching "End" we know we merged an event from workflowA into workflowB in order for workflowB to complete.
-	workflow.Require(t, workflowB, foreignID, runID, StatusEnd, typeB{
+	workflow.Require(t, workflowB, foreignID, StatusEnd, typeB{
 		Val: "workflow A set this value",
+	})
+}
+
+func TestConnector(t *testing.T) {
+	ctx := context.Background()
+	streamerA := memstreamer.New()
+	streamATopic := "my-topic-a"
+	streamerA.NewProducer(streamATopic)
+
+	type typeX struct {
+		Val string
+	}
+	buidler := workflow.NewBuilder[typeX, status]("workflow X")
+
+	buidler.AddConnector(
+		"my-test-connector",
+		streamerA.NewConsumer(streamATopic, "stream-a-connector"),
+		func(ctx context.Context, w *workflow.Workflow[typeX, status], e *workflow.Event) error {
+			_, err := w.Trigger(ctx, fmt.Sprintf("%v", e.ForeignID), StatusStart, workflow.WithInitialValue[typeX, status](&typeX{
+				Val: "trigger set value",
+			}))
+			if err != nil {
+				return err
+			}
+
+			return nil
+		},
+	)
+
+	buidler.AddStep(StatusStart, func(ctx context.Context, r *workflow.Record[typeX, status]) (bool, error) {
+		r.Object.Val = "workflow step set value"
+		return true, nil
+	}, StatusEnd)
+
+	workflowX := buidler.Build(
+		memstreamer.New(),
+		memrecordstore.New(),
+		memtimeoutstore.New(),
+		memrolescheduler.New(),
+	)
+
+	workflowX.Run(ctx)
+
+	p := streamerA.NewProducer(streamATopic)
+	err := p.Send(ctx, 9, 1, map[workflow.Header]string{
+		workflow.HeaderTopic: streamATopic,
+	})
+	jtest.RequireNil(t, err)
+
+	workflow.Require(t, workflowX, "9", StatusStart, typeX{
+		Val: "trigger set value",
+	})
+
+	workflow.Require(t, workflowX, "9", StatusEnd, typeX{
+		Val: "workflow step set value",
 	})
 }

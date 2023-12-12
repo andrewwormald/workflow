@@ -63,6 +63,24 @@ func testStore_Latest(t *testing.T, store workflow.RecordStore) {
 		err = store.Store(ctx, wr, eventEmitter)
 		jtest.RequireNil(t, err)
 
+		expected := workflow.WireRecord{
+			ID:           1,
+			WorkflowName: workflowName,
+			ForeignID:    foreignID,
+			RunID:        runID,
+			Status:       int(statusStarted),
+			IsStart:      true,
+			IsEnd:        false,
+			Object:       b,
+			CreatedAt:    createdAt,
+		}
+
+		latest, err := store.Latest(ctx, workflowName, foreignID)
+		jtest.RequireNil(t, err)
+
+		recordIsEqual(t, expected, *latest)
+
+		wr = latest
 		wr.Status = int(statusEnd)
 		wr.IsStart = false
 		wr.IsEnd = true
@@ -71,8 +89,8 @@ func testStore_Latest(t *testing.T, store workflow.RecordStore) {
 
 		require.Equal(t, 2, *counterPtr)
 
-		expected := workflow.WireRecord{
-			ID:           2,
+		expected = workflow.WireRecord{
+			ID:           1,
 			WorkflowName: workflowName,
 			ForeignID:    foreignID,
 			RunID:        runID,
@@ -83,7 +101,7 @@ func testStore_Latest(t *testing.T, store workflow.RecordStore) {
 			CreatedAt:    createdAt,
 		}
 
-		latest, err := store.Latest(ctx, workflowName, foreignID)
+		latest, err = store.Latest(ctx, workflowName, foreignID)
 		jtest.RequireNil(t, err)
 		recordIsEqual(t, expected, *latest)
 	})
@@ -144,7 +162,7 @@ func testStore_Lookup(t *testing.T, store workflow.RecordStore) {
 }
 
 func testStore_Store(t *testing.T, store workflow.RecordStore) {
-	t.Run("Store", func(t *testing.T) {
+	t.Run("RecordStore", func(t *testing.T) {
 		ctx := context.Background()
 		workflowName := "my_workflow"
 		foreignID := "Andrew Wormald"

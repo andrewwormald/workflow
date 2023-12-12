@@ -16,13 +16,24 @@ type ConnectorFilter func(ctx context.Context, e *Event) (foreignID string, err 
 
 type ConnectorConsumerFunc[Type any, Status StatusType] func(ctx context.Context, r *Record[Type, Status], e *Event) (bool, error)
 
-type ConnectionDetails struct {
+type ConnectorFunc[Type any, Status StatusType] func(ctx context.Context, w *Workflow[Type, Status], e *Event) error
+
+type WorkflowConnectionDetails struct {
 	WorkflowName string
 	Status       int
 	Stream       EventStreamer
 }
 
 type connectorConfig[Type any, Status StatusType] struct {
+	name        string
+	consumerFn  Consumer
+	connectorFn ConnectorFunc[Type, Status]
+
+	errBackOff    time.Duration
+	parallelCount int
+}
+
+type workflowConnectorConfig[Type any, Status StatusType] struct {
 	workflowName     string
 	status           int
 	stream           EventStreamer
@@ -35,7 +46,65 @@ type connectorConfig[Type any, Status StatusType] struct {
 	parallelCount    int
 }
 
+type connectorOptions struct {
+	parallelCount    int
+	pollingFrequency time.Duration
+	errBackOff       time.Duration
+}
+
+type ConnectorOption func(co *connectorOptions)
+
+func WithConnectorParallelCount(instances int) ConnectorOption {
+	return func(co *connectorOptions) {
+		co.parallelCount = instances
+	}
+}
+
+func WithConnectorErrBackOff(d time.Duration) ConnectorOption {
+	return func(co *connectorOptions) {
+		co.errBackOff = d
+	}
+}
+
 func connectorConsumer[Type any, Status StatusType](w *Workflow[Type, Status], cc *connectorConfig[Type, Status], shard, totalShards int) {
+	role := makeRole(
+		cc.name,
+		"connector",
+		"to",
+		w.Name,
+		"consumer",
+		fmt.Sprintf("%v", shard),
+		"of",
+		fmt.Sprintf("%v", totalShards),
+	)
+
+	errBackOff := w.defaultErrBackOff
+	if cc.errBackOff.Nanoseconds() != 0 {
+		errBackOff = cc.errBackOff
+	}
+
+	defer cc.consumerFn.Close()
+	w.run(role, func(ctx context.Context) error {
+		e, ack, err := cc.consumerFn.Recv(ctx)
+		if err != nil {
+			return err
+		}
+
+		err = cc.connectorFn(ctx, w, e)
+		if err != nil {
+			return errors.Wrap(err, "failed to consume - connector consumer", j.MKV{
+				"workflow_name":    w.Name,
+				"event_foreign_id": e.ForeignID,
+				"event_type":       e.Type,
+				"role":             cc.name,
+			})
+		}
+
+		return ack()
+	}, errBackOff)
+}
+
+func workflowConnectorConsumer[Type any, Status StatusType](w *Workflow[Type, Status], cc *workflowConnectorConfig[Type, Status], shard, totalShards int) {
 	role := makeRole(
 		cc.workflowName,
 		fmt.Sprintf("%v", cc.status),

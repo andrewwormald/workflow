@@ -60,8 +60,8 @@ func WorkflowB(d WorkflowBDeps) *workflow.Workflow[TypeB, examples.Status] {
 		return true, nil
 	}, examples.StatusFollowedTheExample)
 
-	builder.ConnectWorkflow(
-		workflow.ConnectionDetails{
+	builder.AddWorkflowConnector(
+		workflow.WorkflowConnectionDetails{
 			WorkflowName: "workflow A",
 			Status:       int(examples.StatusCreatedAFunExample),
 			Stream:       d.WorkflowAStreamer,
@@ -71,7 +71,7 @@ func WorkflowB(d WorkflowBDeps) *workflow.Workflow[TypeB, examples.Status] {
 		},
 		examples.StatusFollowedTheExample,
 		func(ctx context.Context, r *workflow.Record[TypeB, examples.Status], e *workflow.Event) (bool, error) {
-			recordA, err := d.WorkflowARecordStore.Lookup(ctx, e.RecordID)
+			recordA, err := d.WorkflowARecordStore.Lookup(ctx, e.ForeignID)
 			if err != nil {
 				return false, err
 			}

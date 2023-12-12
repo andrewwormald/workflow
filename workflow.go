@@ -69,7 +69,8 @@ type Workflow[Type any, Status StatusType] struct {
 	callback  map[Status][]callback[Type, Status]
 	timeouts  map[Status]timeouts[Type, Status]
 
-	connectorConfigs []connectorConfig[Type, Status]
+	workflowConnectorConfigs []workflowConnectorConfig[Type, Status]
+	connectorConfigs         []connectorConfig[Type, Status]
 
 	internalStateMu sync.Mutex
 	// internalState holds the State of all expected consumers and timeout  go routines using their role names
@@ -110,6 +111,18 @@ func (w *Workflow[Type, Status]) Run(ctx context.Context) {
 		for status, timeouts := range w.timeouts {
 			go timeoutPoller(ctx, w, status, timeouts)
 			go timeoutAutoInserterConsumer(ctx, w, status, timeouts)
+		}
+
+		for _, config := range w.workflowConnectorConfigs {
+			if config.parallelCount < 2 {
+				// Launch all consumers in runners
+				go workflowConnectorConsumer(w, &config, 1, 1)
+			} else {
+				// Run as sharded parallel consumers
+				for i := 1; i <= config.parallelCount; i++ {
+					go workflowConnectorConsumer(w, &config, i, config.parallelCount)
+				}
+			}
 		}
 
 		for _, config := range w.connectorConfigs {
