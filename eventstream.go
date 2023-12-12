@@ -22,7 +22,7 @@ type Consumer interface {
 	Close() error
 }
 
-// Ack is used for the event streamer to update it's cursor of what messages have
+// Ack is used for the event streamer to update its cursor of what messages have
 // been consumed. If Ack is not called then the event streamer, depending on implementation,
 // will likely not keep track of which records / events have been consumed.
 type Ack func() error
@@ -100,7 +100,7 @@ func awaitWorkflowStatusByForeignID[Type any, Status StatusType](ctx context.Con
 			continue
 		}
 
-		r, err := w.recordStore.Lookup(ctx, e.RecordID)
+		r, err := w.recordStore.Lookup(ctx, e.ForeignID)
 		if errors.Is(err, ErrRecordNotFound) {
 			err = ack()
 			if err != nil {

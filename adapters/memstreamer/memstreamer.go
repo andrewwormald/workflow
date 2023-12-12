@@ -62,7 +62,7 @@ func (s *Stream) Send(ctx context.Context, recordID int64, statusType int, heade
 	length := len(*s.log)
 	*s.log = append(*s.log, &workflow.Event{
 		ID:        int64(length) + 1,
-		RecordID:  recordID,
+		ForeignID: recordID,
 		Type:      statusType,
 		Headers:   headers,
 		CreatedAt: time.Now(),

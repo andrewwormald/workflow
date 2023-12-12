@@ -138,7 +138,7 @@ func (c Consumer) Recv(ctx context.Context) (*workflow.Event, workflow.Ack, erro
 
 		event := &workflow.Event{
 			ID:        reflexEvent.IDInt(),
-			RecordID:  reflexEvent.ForeignIDInt(),
+			ForeignID: reflexEvent.ForeignIDInt(),
 			Type:      reflexEvent.Type.ReflexType(),
 			Headers:   headers,
 			CreatedAt: reflexEvent.Timestamp,

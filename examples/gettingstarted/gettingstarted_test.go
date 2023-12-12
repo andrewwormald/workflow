@@ -28,19 +28,19 @@ func TestWorkflow(t *testing.T) {
 	wf.Run(ctx)
 
 	foreignID := "82347982374982374"
-	runID, err := wf.Trigger(ctx, foreignID, examples.StatusStarted)
+	_, err := wf.Trigger(ctx, foreignID, examples.StatusStarted)
 	jtest.RequireNil(t, err)
 
-	workflow.Require(t, wf, foreignID, runID, examples.StatusReadTheDocs, gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, examples.StatusReadTheDocs, gettingstarted.GettingStarted{
 		ReadTheDocs: "✅",
 	})
 
-	workflow.Require(t, wf, foreignID, runID, examples.StatusFollowedTheExample, gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, examples.StatusFollowedTheExample, gettingstarted.GettingStarted{
 		ReadTheDocs:     "✅",
 		FollowAnExample: "✅",
 	})
 
-	workflow.Require(t, wf, foreignID, runID, examples.StatusCreatedAFunExample, gettingstarted.GettingStarted{
+	workflow.Require(t, wf, foreignID, examples.StatusCreatedAFunExample, gettingstarted.GettingStarted{
 		ReadTheDocs:       "✅",
 		FollowAnExample:   "✅",
 		CreateAFunExample: "✅",

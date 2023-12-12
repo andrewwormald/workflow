@@ -13,11 +13,10 @@ import (
 
 func New() *Store {
 	s := &Store{
-		idIncrement:        1,
-		timeoutIdIncrement: 1,
-		clock:              clock.RealClock{},
-		keyIndex:           make(map[string][]*workflow.WireRecord),
-		store:              make(map[int64]*workflow.WireRecord),
+		keyIndex:         make(map[string]*workflow.WireRecord),
+		store:            make(map[int64]*workflow.WireRecord),
+		snapshots:        make(map[string][]*workflow.WireRecord),
+		snapshotsOffsets: make(map[string]int),
 	}
 
 	return s
@@ -31,12 +30,10 @@ type Store struct {
 
 	clock clock.Clock
 
-	keyIndex map[string][]*workflow.WireRecord
-	store    map[int64]*workflow.WireRecord
-
-	tmu                sync.Mutex
-	timeoutIdIncrement int64
-	timeouts           []*workflow.Timeout
+	keyIndex         map[string]*workflow.WireRecord
+	store            map[int64]*workflow.WireRecord
+	snapshots        map[string][]*workflow.WireRecord
+	snapshotsOffsets map[string]int
 }
 
 func (s *Store) Lookup(ctx context.Context, id int64) (*workflow.WireRecord, error) {
@@ -55,9 +52,10 @@ func (s *Store) Store(ctx context.Context, record *workflow.WireRecord, emitter 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.idIncrement++
-
-	record.ID = s.idIncrement
+	if record.ID == 0 {
+		s.idIncrement++
+		record.ID = s.idIncrement
+	}
 
 	err := emitter(record.ID)
 	if err != nil {
@@ -65,8 +63,11 @@ func (s *Store) Store(ctx context.Context, record *workflow.WireRecord, emitter 
 	}
 
 	uk := uniqueKey(record.WorkflowName, record.ForeignID)
-	s.keyIndex[uk] = append(s.keyIndex[uk], record)
+	s.keyIndex[uk] = record
 	s.store[record.ID] = record
+
+	snapshotKey := fmt.Sprintf("%v-%v-%v", record.WorkflowName, record.ForeignID, record.RunID)
+	s.snapshots[snapshotKey] = append(s.snapshots[snapshotKey], record)
 
 	return nil
 }
@@ -76,12 +77,36 @@ func (s *Store) Latest(ctx context.Context, workflowName, foreignID string) (*wo
 	defer s.mu.Unlock()
 
 	uk := uniqueKey(workflowName, foreignID)
-	records := s.keyIndex[uk]
-	if len(records) == 0 {
+	record, ok := s.keyIndex[uk]
+	if !ok {
 		return nil, errors.Wrap(workflow.ErrRecordNotFound, "")
 	}
 
-	return records[len(records)-1], nil
+	return record, nil
+}
+
+func (s *Store) Snapshots(workflowName, foreignID, runID string) []*workflow.WireRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%v-%v-%v", workflowName, foreignID, runID)
+	return s.snapshots[key]
+}
+
+func (s *Store) SetSnapshotOffset(workflowName, foreignID, runID string, offset int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%v-%v-%v", workflowName, foreignID, runID)
+	s.snapshotsOffsets[key] = offset
+}
+
+func (s *Store) SnapshotOffset(workflowName, foreignID, runID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%v-%v-%v", workflowName, foreignID, runID)
+	return s.snapshotsOffsets[key]
 }
 
 func uniqueKey(s1, s2 string) string {

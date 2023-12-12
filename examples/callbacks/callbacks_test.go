@@ -35,7 +35,7 @@ func TestCallbackWorkflow(t *testing.T) {
 		Confirmed: true,
 	})
 
-	workflow.Require(t, wf, foreignID, runID, examples.StatusFollowedTheExample, callbacks.Example{
+	workflow.Require(t, wf, foreignID, examples.StatusFollowedTheExample, callbacks.Example{
 		EmailConfirmed: true,
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/jtest"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +62,7 @@ func AwaitTimeoutInsert[Type any, Status StatusType](t *testing.T, w *Workflow[T
 	}
 }
 
-func Require[Type any, Status StatusType](t *testing.T, w *Workflow[Type, Status], foreignID, runID string, waitFor Status, expected Type) {
+func Require[Type any, Status StatusType](t *testing.T, w *Workflow[Type, Status], foreignID string, waitFor Status, expected Type) {
 	if t == nil {
 		panic("Require can only be used for testing")
 	}
@@ -72,9 +73,49 @@ func Require[Type any, Status StatusType](t *testing.T, w *Workflow[Type, Status
 		return
 	}
 
-	ctx := context.TODO()
-	actual, err := w.Await(ctx, foreignID, runID, waitFor)
+	testingStore, ok := w.recordStore.(TestingRecordStore)
+	if !ok {
+		panic("Require function requires TestingRecordStore implementation for record store dependency")
+	}
+
+	var runID string
+	for runID == "" {
+		latest, err := w.recordStore.Latest(context.Background(), w.Name, foreignID)
+		if errors.Is(err, ErrRecordNotFound) {
+			continue
+		} else {
+			jtest.RequireNil(t, err)
+		}
+
+		runID = latest.RunID
+	}
+
+	var wr *WireRecord
+	for wr == nil {
+		offset := testingStore.SnapshotOffset(w.Name, foreignID, runID)
+		snapshots := testingStore.Snapshots(w.Name, foreignID, runID)
+		for i, r := range snapshots {
+			if offset > i {
+				continue
+			}
+
+			if r.Status == int(waitFor) {
+				wr = r
+			}
+
+			testingStore.SetSnapshotOffset(w.Name, foreignID, runID, offset+1)
+		}
+	}
+
+	var typ Type
+	err := json.Unmarshal(wr.Object, &typ)
 	jtest.RequireNil(t, err)
+
+	actual := &Record[Type, Status]{
+		WireRecord: *wr,
+		Status:     Status(wr.Status),
+		Object:     &typ,
+	}
 
 	require.Equal(t, expected, *actual.Object)
 }
