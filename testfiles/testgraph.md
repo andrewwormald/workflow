@@ -2,10 +2,10 @@
 stateDiagram-v2
 	direction LR
 	
-	[*]-->Unkown
+	[*]-->Start_now
 	
-	Unkown-->Unkown
-	Unkown-->Unkown
+	Start_now-->Middle
+	Middle-->End
 	
-	Unkown-->[*]
+	End-->[*]
 ```
