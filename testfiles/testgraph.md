@@ -2,9 +2,9 @@
 stateDiagram-v2
 	direction LR
 	
-	[*]-->Start_now
+	[*]-->Start
 	
-	Start_now-->Middle
+	Start-->Middle
 	Middle-->End
 	
 	End-->[*]
