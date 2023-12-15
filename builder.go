@@ -14,7 +14,7 @@ func NewBuilder[Type any, Status StatusType](name string) *Builder[Type, Status]
 			Name:                    name,
 			clock:                   clock.RealClock{},
 			defaultPollingFrequency: 500 * time.Millisecond,
-			defaultErrBackOff:       500 * time.Millisecond,
+			defaultErrBackOff:       5 * time.Second,
 			consumers:               make(map[Status][]consumerConfig[Type, Status]),
 			callback:                make(map[Status][]callback[Type, Status]),
 			timeouts:                make(map[Status]timeouts[Type, Status]),
