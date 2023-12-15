@@ -55,8 +55,30 @@ const (
 
 func (s status) String() string {
 	switch s {
+	case StatusInitiated:
+		return "Initiated"
+	case StatusProfileCreated:
+		return "Profile Created"
+	case StatusEmailConfirmationSent:
+		return "Email Confirmation Sent"
+	case StatusEmailVerified:
+		return "Email Verified"
+	case StatusCellphoneNumberSubmitted:
+		return "Cellphone Number Submitted"
+	case StatusOTPSent:
+		return "OTP Sent"
+	case StatusOTPVerified:
+		return "OTP Verified"
+	case StatusCompleted:
+		return "Completed"
+	case StatusStart:
+		return "Start"
+	case StatusMiddle:
+		return "Middle"
+	case StatusEnd:
+		return "End"
 	default:
-		return "Unkown"
+		return "Unknown"
 	}
 }
 
