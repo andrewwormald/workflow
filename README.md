@@ -1,3 +1,5 @@
+[![codecov](https://codecov.io/gh/andrewwormald/workflow/graph/badge.svg?token=BSDVHPTK8D)](https://codecov.io/gh/andrewwormald/workflow)
+
 ![alt text](./logo/workflow.png)
 
 ## Workflow is a Golang workflow framework that encompasses these main features:
