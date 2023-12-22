@@ -1,3 +1,4 @@
+[![Go](https://github.com/andrewwormald/workflow/actions/workflows/go.yml/badge.svg)](https://github.com/andrewwormald/workflow/actions/workflows/go.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/andrewwormald/workflow)](https://goreportcard.com/report/github.com/andrewwormald/workflow)
 [![codecov](https://codecov.io/gh/andrewwormald/workflow/graph/badge.svg?token=BSDVHPTK8D)](https://codecov.io/gh/andrewwormald/workflow)
 
