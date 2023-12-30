@@ -41,15 +41,18 @@ func pollTimeouts[Type any, Status StatusType](ctx context.Context, w *Workflow[
 
 			if r.Status != int(status) {
 				// Object has been updated already. Mark timeout as cancelled as it is no longer valid.
-				err = w.timeoutStore.Cancel(ctx, expiredTimeout.WorkflowName, expiredTimeout.ForeignID, expiredTimeout.RunID, expiredTimeout.Status)
+				err = w.timeoutStore.Cancel(ctx, expiredTimeout.ID)
 				if err != nil {
 					return err
 				}
+
+				// Continue to next expired timeout
+				continue
 			}
 
 			for _, config := range timeouts.Transitions {
 				t0 := w.clock.Now()
-				err = processTimeout(ctx, w, config, r)
+				err = processTimeout(ctx, w, config, r, expiredTimeout)
 				if err != nil {
 					metrics.ProcessLatency.WithLabelValues(w.Name, processName).Observe(w.clock.Since(t0).Seconds())
 					return err
@@ -66,7 +69,7 @@ func pollTimeouts[Type any, Status StatusType](ctx context.Context, w *Workflow[
 	}
 }
 
-func processTimeout[Type any, Status StatusType](ctx context.Context, w *Workflow[Type, Status], config timeout[Type, Status], r *WireRecord) error {
+func processTimeout[Type any, Status StatusType](ctx context.Context, w *Workflow[Type, Status], config timeout[Type, Status], r *WireRecord, timeout Timeout) error {
 	var t Type
 	err := Unmarshal(r.Object, &t)
 	if err != nil {
@@ -108,7 +111,7 @@ func processTimeout[Type any, Status StatusType](ctx context.Context, w *Workflo
 		}
 
 		// Mark timeout as having been executed (aka completed) only in the case that true is returned.
-		err = w.timeoutStore.Complete(ctx, record.WorkflowName, record.ForeignID, record.RunID, int(record.Status))
+		err = w.timeoutStore.Complete(ctx, timeout.ID)
 		if err != nil {
 			return err
 		}
